@@ -1,0 +1,15 @@
+Flask
+Flask-CORS
+Werkzeug
+python-dotenv
+pandas
+numpy
+scikit-learn
+xgboost
+joblib
+sqlalchemy
+psycopg2-binary
+redis
+celery
+pytest
+flake8

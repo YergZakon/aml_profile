@@ -1,0 +1,88 @@
+# Логи
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Зависимости
+node_modules
+dist
+dist-ssr
+*.local
+
+# Редакторы
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Переменные окружения
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Тестовые файлы АФМ
+test-data/
+sample-transactions/
+*.test.json
+do_range_*.json
+
+# Временные файлы загрузки
+uploads/
+temp/
+chunks/
+
+# Отчеты и результаты анализа
+reports/
+analysis-results/
+risk-reports/
+
+# Конфиденциальные данные
+*.key
+*.pem
+*.cert
+credentials/
+secrets/
+
+# Файлы операционной системы
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Кэш
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.vuepress/dist
+.serverless/
+.fusebox/
+
+# Файлы сборки
+build/
+out/
+.output/
+
+# Покрытие тестов
+coverage/
+.nyc_output/
+
+# TypeScript
+*.tsbuildinfo
+
+# Другое
+.eslintcache
+.stylelintcache
+*.pid
+*.seed
+*.pid.lock

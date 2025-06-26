@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <!-- Мета-теги для системы АФМ РК -->
+    <meta name="description" content="Система мониторинга транзакций АФМ РК - анализ рисковых операций" />
+    <meta name="author" content="Агентство по финансовому мониторингу Республики Казахстан" />
+    
+    <!-- Безопасность -->
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="robots" content="noindex, nofollow" />
+    
+    <!-- Предзагрузка шрифтов -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <title>АФМ РК - Система мониторинга транзакций</title>
+    
+    <!-- Стили для начального экрана загрузки -->
+    <style>
+      #root {
+        min-height: 100vh;
+      }
+      
+      /* Экран загрузки до инициализации React */
+      .app-loader {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: #f9fafb;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+      }
+      
+      .app-loader-logo {
+        width: 120px;
+        height: 120px;
+        margin-bottom: 32px;
+      }
+      
+      .app-loader-spinner {
+        width: 48px;
+        height: 48px;
+        border: 3px solid #e5e7eb;
+        border-top-color: #00AED6;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      
+      .app-loader-text {
+        margin-top: 24px;
+        color: #6b7280;
+        font-family: 'Inter', system-ui, sans-serif;
+        font-size: 14px;
+      }
+      
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      
+      /* Скрываем loader когда React загружен */
+      #root:not(:empty) + .app-loader {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Основной контейнер React приложения -->
+    <div id="root"></div>
+    
+    <!-- Экран загрузки (показывается до загрузки React) -->
+    <div class="app-loader" id="app-loader">
+      <!-- SVG логотип АФМ РК -->
+      <svg class="app-loader-logo" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="120" height="120" rx="20" fill="#00AED6" fill-opacity="0.1"/>
+        <path d="M60 30L75 45L60 60L45 45L60 30Z" fill="#00AED6"/>
+        <path d="M30 60L45 75L60 60L45 45L30 60Z" fill="#FEC50C"/>
+        <path d="M60 60L75 75L90 60L75 45L60 60Z" fill="#00AED6"/>
+        <path d="M60 60L45 75L60 90L75 75L60 60Z" fill="#FEC50C"/>
+        <text x="60" y="105" text-anchor="middle" font-family="Inter" font-size="12" font-weight="600" fill="#075985">АФМ РК</text>
+      </svg>
+      
+      <div class="app-loader-spinner"></div>
+      <div class="app-loader-text">Загрузка системы мониторинга...</div>
+    </div>
+    
+    <!-- Noscript предупреждение -->
+    <noscript>
+      <div style="position: fixed; top: 0; left: 0; width: 100%; padding: 20px; background: #dc2626; color: white; text-align: center; font-family: system-ui, sans-serif;">
+        Для работы системы мониторинга транзакций АФМ РК требуется включенный JavaScript
+      </div>
+    </noscript>
+    
+    <!-- Подключение основного скрипта -->
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

@@ -1,0 +1,40 @@
+{
+  "name": "afm-rk-monitoring-system",
+  "version": "1.0.0",
+  "description": "Система мониторинга транзакций для Агентства по финансовому мониторингу РК",
+  "private": true,
+  "scripts": {
+    "install:all": "npm run install:backend && npm run install:frontend",
+    "install:backend": "cd aml-backend && pip install -r requirements.txt",
+    "install:frontend": "cd aml-monitoring-frontend && npm install",
+    "dev": "node run-dev.js",
+    "dev:backend": "cd aml-backend && python app.py",
+    "dev:frontend": "cd aml-monitoring-frontend && npm run dev",
+    "dev:concurrent": "concurrently -n \"BACKEND,FRONTEND\" -c \"yellow,cyan\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "build": "cd aml-monitoring-frontend && npm run build",
+    "test": "npm run test:backend && npm run test:frontend",
+    "test:backend": "cd aml-backend && python -m pytest",
+    "test:frontend": "cd aml-monitoring-frontend && npm test",
+    "lint": "npm run lint:backend && npm run lint:frontend",
+    "lint:backend": "cd aml-backend && flake8",
+    "lint:frontend": "cd aml-monitoring-frontend && eslint src",
+    "clean": "npm run clean:backend && npm run clean:frontend",
+    "clean:backend": "cd aml-backend && rm -rf __pycache__ *.pyc .pytest_cache",
+    "clean:frontend": "cd aml-monitoring-frontend && rm -rf node_modules dist"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=7.0.0"
+  },
+  "author": "АФМ РК",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@uppy/core": "^4.4.6",
+    "@uppy/dashboard": "^4.3.4",
+    "@uppy/react": "^4.3.0",
+    "@uppy/tus": "^4.2.2"
+  }
+}

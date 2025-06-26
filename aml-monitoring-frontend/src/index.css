@@ -1,0 +1,239 @@
+/* Подключение Tailwind CSS */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Базовые стили для системы АФМ РК */
+@layer base {
+  /* Сглаживание шрифтов */
+  * {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Основные стили body */
+  body {
+    @apply bg-gray-50 text-gray-900;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  /* Стили для заголовков */
+  h1 {
+    @apply text-3xl font-bold text-gray-900;
+  }
+  
+  h2 {
+    @apply text-2xl font-semibold text-gray-800;
+  }
+  
+  h3 {
+    @apply text-xl font-semibold text-gray-800;
+  }
+  
+  h4 {
+    @apply text-lg font-medium text-gray-700;
+  }
+
+  /* Стили для кода и данных транзакций */
+  code, .transaction-id {
+    @apply font-mono text-sm;
+  }
+}
+
+/* Компоненты для системы мониторинга */
+@layer components {
+  /* Карточка дашборда */
+  .dashboard-card {
+    @apply bg-white rounded-lg shadow-sm border border-gray-200 p-6 
+           hover:shadow-md transition-shadow duration-200;
+  }
+
+  /* Индикаторы риска */
+  .risk-indicator {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  
+  .risk-indicator-high {
+    @apply risk-indicator bg-red-100 text-red-800 border border-red-200;
+  }
+  
+  .risk-indicator-medium {
+    @apply risk-indicator bg-orange-100 text-orange-800 border border-orange-200;
+  }
+  
+  .risk-indicator-low {
+    @apply risk-indicator bg-yellow-100 text-yellow-800 border border-yellow-200;
+  }
+  
+  .risk-indicator-safe {
+    @apply risk-indicator bg-green-100 text-green-800 border border-green-200;
+  }
+
+  /* Статусы обработки */
+  .status-badge {
+    @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-sm font-medium;
+  }
+  
+  .status-pending {
+    @apply status-badge bg-blue-50 text-blue-700 border border-blue-200;
+  }
+  
+  .status-processing {
+    @apply status-badge bg-purple-50 text-purple-700 border border-purple-200;
+  }
+  
+  .status-completed {
+    @apply status-badge bg-green-50 text-green-700 border border-green-200;
+  }
+  
+  .status-error {
+    @apply status-badge bg-red-50 text-red-700 border border-red-200;
+  }
+
+  /* Кнопки действий */
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 border rounded-md 
+           font-medium text-sm transition-all duration-200 focus:outline-none 
+           focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .btn-primary {
+    @apply btn bg-primary-600 text-white border-transparent 
+           hover:bg-primary-700 focus:ring-primary-500;
+  }
+  
+  .btn-secondary {
+    @apply btn bg-white text-gray-700 border-gray-300 
+           hover:bg-gray-50 focus:ring-primary-500;
+  }
+  
+  .btn-danger {
+    @apply btn bg-red-600 text-white border-transparent 
+           hover:bg-red-700 focus:ring-red-500;
+  }
+
+  /* Таблица транзакций */
+  .data-table {
+    @apply min-w-full divide-y divide-gray-200 border border-gray-200 rounded-lg overflow-hidden;
+  }
+  
+  .data-table thead {
+    @apply bg-gray-50;
+  }
+  
+  .data-table th {
+    @apply px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider;
+  }
+  
+  .data-table td {
+    @apply px-6 py-4 whitespace-nowrap text-sm;
+  }
+  
+  .data-table tbody tr {
+    @apply hover:bg-gray-50 transition-colors duration-150;
+  }
+
+  /* Форма загрузки файлов */
+  .upload-zone {
+    @apply border-2 border-dashed border-gray-300 rounded-lg p-12 
+           text-center hover:border-primary-400 transition-colors duration-200;
+  }
+  
+  .upload-zone-active {
+    @apply border-primary-500 bg-primary-50;
+  }
+
+  /* Прогресс бар */
+  .progress-bar {
+    @apply w-full bg-gray-200 rounded-full h-2.5 overflow-hidden;
+  }
+  
+  .progress-bar-fill {
+    @apply bg-primary-600 h-2.5 rounded-full transition-all duration-300 ease-out;
+  }
+
+  /* Уведомления */
+  .alert {
+    @apply p-4 rounded-md border;
+  }
+  
+  .alert-info {
+    @apply alert bg-blue-50 text-blue-800 border-blue-200;
+  }
+  
+  .alert-success {
+    @apply alert bg-green-50 text-green-800 border-green-200;
+  }
+  
+  .alert-warning {
+    @apply alert bg-yellow-50 text-yellow-800 border-yellow-200;
+  }
+  
+  .alert-error {
+    @apply alert bg-red-50 text-red-800 border-red-200;
+  }
+}
+
+/* Утилиты для анимаций */
+@layer utilities {
+  /* Анимация появления */
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+  }
+  
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Анимация пульсации для индикаторов риска */
+  .animate-risk-pulse {
+    animation: riskPulse 2s ease-in-out infinite;
+  }
+  
+  @keyframes riskPulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  /* Скроллбар для таблиц */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-gray-100 rounded;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-gray-400 rounded hover:bg-gray-500;
+  }
+}
+
+/* Стили для печати отчетов */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  
+  .dashboard-card {
+    break-inside: avoid;
+    box-shadow: none;
+    border: 1px solid #e5e7eb;
+  }
+  
+  body {
+    background: white;
+  }
+}
