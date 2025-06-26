@@ -92,7 +92,38 @@ class AMLIntegrationSystem:
                 )
 
                 # 4. Поведенческий анализ
-                behavioral_result = self.behavioral_profile.detect_behavioral_changes(transaction)
+                # Получаем исторические транзакции для клиента
+                customer_id = transaction.get('sender_name', 'UNKNOWN')
+                cursor = self.db_manager.get_db_cursor()
+                cursor.execute('''
+                    SELECT transaction_date, amount, sender_country, beneficiary_country, sender_name, beneficiary_name
+                    FROM transactions 
+                    WHERE sender_name = ? OR beneficiary_name = ?
+                    ORDER BY transaction_date DESC LIMIT 100
+                ''', (customer_id, customer_id))
+                
+                historical_data = []
+                for row in cursor.fetchall():
+                    try:
+                        # Конвертируем дату из строки в datetime
+                        if isinstance(row[0], str):
+                            tx_date = datetime.strptime(row[0], '%Y-%m-%d %H:%M:%S')
+                        else:
+                            tx_date = row[0]
+                            
+                        historical_data.append({
+                            'date': tx_date,
+                            'amount': row[1],
+                            'country': row[2] or 'KZ',
+                            'counterparty': row[4] or row[5] or 'Unknown',
+                            'channel': 'electronic'
+                        })
+                    except Exception:
+                        continue
+                
+                # Создаем новый профиль для каждого клиента
+                behavioral_profile = BehavioralProfile(customer_id, lookback_days=90)
+                behavioral_result = behavioral_profile.analyze_transaction(transaction, historical_data)
                 
                 # 5. Географический анализ
                 geographic_result = self.geographic_profile.analyze_transaction_geography(transaction)
@@ -104,8 +135,14 @@ class AMLIntegrationSystem:
                     'beneficiary_id': transaction.get('beneficiary_id'),
                     'amount': transaction.get('amount') or transaction.get('amount_kzt'),
                     'date': transaction.get('transaction_date'),
-                    'final_risk_score': transactional_result.get('risk_score', 0),
-                    'is_suspicious': transactional_result.get('is_suspicious', False),
+                    'final_risk_score': self._calculate_final_risk_score(
+                        transactional_result, network_result, customer_result, 
+                        behavioral_result, geographic_result
+                    ),
+                    'is_suspicious': self._is_transaction_suspicious(
+                        transactional_result, network_result, customer_result, 
+                        behavioral_result, geographic_result
+                    ),
                     'profiles': {
                         'transactional': transactional_result,
                         'customer': customer_result,
@@ -172,10 +209,106 @@ class AMLIntegrationSystem:
         all_reasons = []
         for result in profile_results:
             if isinstance(result, dict):
+                # Ищем причины в разных полях
                 reasons = result.get('reasons', [])
+                suspicious_reasons = result.get('suspicious_reasons', [])
+                
                 if reasons:
                     all_reasons.extend(reasons)
+                if suspicious_reasons:
+                    all_reasons.extend(suspicious_reasons)
+                    
+                # Специальная обработка для сетевого анализа
+                if 'schemes_found' in result and result['schemes_found']:
+                    for scheme in result['schemes_found']:
+                        all_reasons.append(f"[СЕТЬ] Обнаружена схема: {scheme}")
+                        
+            elif isinstance(result, list):
+                # Обработка списков (например, поведенческий анализ)
+                for item in result:
+                    if isinstance(item, dict):
+                        reasons = item.get('reasons', [])
+                        suspicious_reasons = item.get('suspicious_reasons', [])
+                        
+                        if reasons:
+                            all_reasons.extend(reasons)
+                        if suspicious_reasons:
+                            all_reasons.extend(suspicious_reasons)
+                        
         return list(set(all_reasons))  # Убираем дубликаты
+
+    def _calculate_final_risk_score(self, transactional_result, network_result, 
+                                   customer_result, behavioral_result, geographic_result):
+        """Рассчитывает итоговый риск-скор с учетом всех профилей"""
+        scores = []
+        
+        # Транзакционный анализ (вес 40%)
+        trans_score = transactional_result.get('risk_score', 0) * 0.4
+        scores.append(trans_score)
+        
+        # Сетевой анализ (вес 30%)
+        network_score = network_result.get('risk_score', 0) * 0.3
+        scores.append(network_score)
+        
+        # Клиентский анализ (вес 15%)
+        customer_score = customer_result.get('risk_score', 0) * 0.15
+        scores.append(customer_score)
+        
+        # Поведенческий анализ (вес 10%)
+        if isinstance(behavioral_result, list):
+            # Если behavioral_result - это список, берем максимальный риск-скор
+            behavioral_score = max([item.get('risk_score', 0) for item in behavioral_result] + [0]) * 0.1
+        else:
+            behavioral_score = behavioral_result.get('risk_score', 0) * 0.1
+        scores.append(behavioral_score)
+        
+        # Географический анализ (вес 5%)
+        geographic_score = geographic_result.get('risk_score', 0) * 0.05
+        scores.append(geographic_score)
+        
+        # Итоговый скор
+        final_score = sum(scores)
+        
+        # Бонус за множественные профили (если несколько профилей показывают риск)
+        results_to_check = [transactional_result, network_result, customer_result, geographic_result]
+        
+        suspicious_count = sum(1 for result in results_to_check if result.get('is_suspicious', False))
+        
+        # Обработка behavioral_result отдельно
+        if isinstance(behavioral_result, list):
+            if any(item.get('is_suspicious', False) for item in behavioral_result):
+                suspicious_count += 1
+        else:
+            if behavioral_result.get('is_suspicious', False):
+                suspicious_count += 1
+        
+        if suspicious_count > 1:
+            final_score += min(suspicious_count * 0.5, 2.0)  # Максимум +2 балла
+        
+        return min(final_score, 10.0)  # Ограничиваем максимумом 10
+
+    def _is_transaction_suspicious(self, transactional_result, network_result, 
+                                  customer_result, behavioral_result, geographic_result):
+        """Определяет, является ли транзакция подозрительной"""
+        # Если хотя бы один профиль считает транзакцию подозрительной
+        results_to_check = [transactional_result, network_result, customer_result, geographic_result]
+        
+        # Обработка behavioral_result, который может быть списком
+        if isinstance(behavioral_result, list):
+            behavioral_suspicious = any(item.get('is_suspicious', False) for item in behavioral_result)
+        else:
+            behavioral_suspicious = behavioral_result.get('is_suspicious', False)
+            
+        if behavioral_suspicious or any(result.get('is_suspicious', False) for result in results_to_check):
+            return True
+        
+        # Или если итоговый риск-скор высокий
+        final_score = self._calculate_final_risk_score(
+            transactional_result, network_result, customer_result, 
+            behavioral_result, geographic_result
+        )
+        
+        return final_score > 7.0
 
 def run_full_analysis(json_filepath: str, db_filepath: str = "aml_system.db"):
     """

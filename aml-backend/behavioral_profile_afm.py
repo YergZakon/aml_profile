@@ -160,9 +160,13 @@ class BehavioralProfile:
         self.baseline_patterns['typical_channels'] = channels
         
         if amounts:
+            amounts_sorted = sorted(amounts)
+            n = len(amounts_sorted)
+            q1_idx = int(n * 0.1)
+            q9_idx = int(n * 0.9)
             self.baseline_patterns['typical_amount_range'] = (
-                statistics.quantile(amounts, 0.1),
-                statistics.quantile(amounts, 0.9)
+                amounts_sorted[q1_idx] if q1_idx < n else amounts_sorted[0],
+                amounts_sorted[q9_idx] if q9_idx < n else amounts_sorted[-1]
             )
     
     def _get_typical_values(self, values: List, coverage: float = 0.8) -> List:
@@ -436,6 +440,62 @@ class BehavioralProfile:
             report += "\n⚠️ Рекомендуется дополнительная проверка"
             
         return report
+
+    def analyze_transaction(self, transaction: Dict, historical_transactions: List[Dict] = None) -> Dict:
+        """Основной метод анализа транзакции для интеграции с AML системой"""
+        
+        # Если есть исторические данные, обновляем базовые паттерны
+        if historical_transactions:
+            self.calculate_baseline(historical_transactions)
+            for tx in historical_transactions:
+                self.add_transaction(tx)
+        
+        # Добавляем текущую транзакцию
+        self.add_transaction(transaction)
+        
+        # Обнаруживаем изменения в поведении
+        changes = self.detect_behavioral_changes(transaction)
+        self.detected_changes = changes
+        
+        # Рассчитываем риск-скор
+        risk_score = self.get_behavior_risk_score()
+        
+        # Определяем подозрительность
+        is_suspicious = risk_score >= 5.0 or any(
+            change.get('severity') in ['HIGH', 'CRITICAL'] for change in changes
+        )
+        
+        # Формируем причины
+        reasons = []
+        for change in changes:
+            reason = f"[ПОВЕДЕНИЕ] {change['type']}: {change['details']}"
+            reasons.append(reason)
+        
+        # Определяем уровень уверенности
+        confidence = min(len(changes) * 0.2 + 0.3, 1.0)
+        
+        # Рекомендации
+        if risk_score >= 8.0:
+            recommendation = "STR"  # Suspicious Transaction Report
+        elif risk_score >= 6.0:
+            recommendation = "EDD"  # Enhanced Due Diligence
+        elif risk_score >= 4.0:
+            recommendation = "MONITOR"
+        else:
+            recommendation = "PASS"
+        
+        return {
+            'risk_score': risk_score,
+            'is_suspicious': is_suspicious,
+            'confidence': confidence,
+            'recommendation': recommendation,
+            'reasons': reasons,
+            'suspicious_reasons': reasons,  # Для совместимости
+            'changes_detected': len(changes),
+            'behavior_changes': changes,
+            'analysis_type': 'behavioral',
+            'baseline_established': len(self.baseline_patterns.get('typical_countries', set())) > 0
+        }
 
 
 # Пример использования

@@ -72,20 +72,55 @@ class AMLJSONDataLoader:
             self.stats['errors'] += 1
 
     def _extract_participants(self, tx_data: Dict) -> List[Dict]:
-        """Извлечение участников транзакции"""
-        # Эта функция должна быть адаптирована под точную структуру ваших данных
-        # Здесь приведен упрощенный пример
+        """Извлечение участников транзакции из правильных полей"""
         participants = []
-        if tx_data.get('gmember_maincode_pl1'):
+        
+        # Первый участник (gmember1)
+        if tx_data.get('gmember1_maincode'):
+            # Формируем полное имя
+            if tx_data.get('gmember1_ur_name'):
+                # Юридическое лицо
+                full_name = tx_data['gmember1_ur_name'].strip()
+            else:
+                # Физическое лицо - собираем из частей
+                parts = []
+                if tx_data.get('gmember1_ac_secondname'):
+                    parts.append(tx_data['gmember1_ac_secondname'])
+                if tx_data.get('gmember1_ac_firstname'):
+                    parts.append(tx_data['gmember1_ac_firstname'])
+                if tx_data.get('gmember1_ac_middlename'):
+                    parts.append(tx_data['gmember1_ac_middlename'])
+                full_name = ' '.join(parts).strip()
+            
             participants.append({
-                'customer_id': tx_data['gmember_maincode_pl1'],
-                'full_name': tx_data.get('gmember_name_pl1', '').strip()
+                'customer_id': tx_data['gmember1_maincode'],
+                'full_name': full_name,
+                'member_type': tx_data.get('gmember1_member_type', 2)  # 1=юрлицо, 2=физлицо
             })
-        if tx_data.get('gmember_maincode_pol1'):
-             participants.append({
-                'customer_id': tx_data['gmember_maincode_pol1'],
-                'full_name': tx_data.get('gmember_name_pol1', '').strip()
+        
+        # Второй участник (gmember2)
+        if tx_data.get('gmember2_maincode'):
+            # Формируем полное имя
+            if tx_data.get('gmember2_ur_name'):
+                # Юридическое лицо
+                full_name = tx_data['gmember2_ur_name'].strip()
+            else:
+                # Физическое лицо - собираем из частей
+                parts = []
+                if tx_data.get('gmember2_ac_secondname'):
+                    parts.append(tx_data['gmember2_ac_secondname'])
+                if tx_data.get('gmember2_ac_firstname'):
+                    parts.append(tx_data['gmember2_ac_firstname'])
+                if tx_data.get('gmember2_ac_middlename'):
+                    parts.append(tx_data['gmember2_ac_middlename'])
+                full_name = ' '.join(parts).strip()
+            
+            participants.append({
+                'customer_id': tx_data['gmember2_maincode'],
+                'full_name': full_name,
+                'member_type': tx_data.get('gmember2_member_type', 2)  # 1=юрлицо, 2=физлицо
             })
+        
         return participants
 
     def _prepare_transaction(self, tx_data: Dict, participants: List[Dict]) -> Dict:

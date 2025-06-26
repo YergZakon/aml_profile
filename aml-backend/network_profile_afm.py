@@ -498,13 +498,27 @@ class NetworkProfile:
             if len(transactions) < 3:
                 continue
             
-            # Сортируем по времени
-            sorted_tx = sorted(transactions, key=lambda x: x['date'])
+            # Сортируем по времени (конвертируем строки в datetime если нужно)
+            def parse_date(tx):
+                date = tx['date']
+                if isinstance(date, str):
+                    try:
+                        return datetime.strptime(date, '%Y-%m-%d %H:%M:%S')
+                    except ValueError:
+                        try:
+                            return datetime.strptime(date, '%Y-%m-%d')
+                        except ValueError:
+                            return datetime.now()
+                return date
+            
+            sorted_tx = sorted(transactions, key=lambda x: parse_date(x))
             
             # Вычисляем интервалы между транзакциями
             intervals = []
             for i in range(1, len(sorted_tx)):
-                interval = (sorted_tx[i]['date'] - sorted_tx[i-1]['date']).total_seconds() / 60  # в минутах
+                date1 = parse_date(sorted_tx[i])
+                date2 = parse_date(sorted_tx[i-1])
+                interval = (date1 - date2).total_seconds() / 60  # в минутах
                 intervals.append(interval)
             
             avg_interval = sum(intervals) / len(intervals) if intervals else 0
@@ -520,7 +534,8 @@ class NetworkProfile:
                 })
             
             # Проверка на транзакции в нерабочее время
-            night_transactions = sum(1 for tx in transactions if tx['date'].hour < 6 or tx['date'].hour > 23)
+            night_transactions = sum(1 for tx in transactions 
+                                   if parse_date(tx).hour < 6 or parse_date(tx).hour > 23)
             if night_transactions > len(transactions) * 0.5:
                 sender, beneficiary = pair_key.split('->')
                 anomalies.append({
