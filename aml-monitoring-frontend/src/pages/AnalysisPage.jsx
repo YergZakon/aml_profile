@@ -197,6 +197,45 @@ const AnalysisPage = () => {
         </div>
       </div>
 
+      {/* Разбивка по типам анализа */}
+      {analysisData?.analysis_type_breakdown && filters.analysisType === 'all' && (
+        <div className="bg-white shadow rounded-lg p-6">
+          <h2 className="text-lg font-semibold mb-4">Разбивка по типам анализа</h2>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-blue-600">
+                {analysisData.analysis_type_breakdown.transactional || 0}
+              </p>
+              <p className="text-sm text-gray-600">Транзакционный</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-green-600">
+                {analysisData.analysis_type_breakdown.customer || 0}
+              </p>
+              <p className="text-sm text-gray-600">Клиентский</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-purple-600">
+                {analysisData.analysis_type_breakdown.network || 0}
+              </p>
+              <p className="text-sm text-gray-600">Сетевой</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-orange-600">
+                {analysisData.analysis_type_breakdown.behavioral || 0}
+              </p>
+              <p className="text-sm text-gray-600">Поведенческий</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-red-600">
+                {analysisData.analysis_type_breakdown.geographic || 0}
+              </p>
+              <p className="text-sm text-gray-600">Географический</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Топ индикаторов риска */}
       {analysisData?.top_risk_indicators && analysisData.top_risk_indicators.length > 0 && (
         <div className="bg-white shadow rounded-lg p-6">
@@ -242,48 +281,76 @@ const AnalysisPage = () => {
                   Риск
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Тип анализа
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Действия
                 </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {analysisData?.suspicious_transactions?.map((transaction, index) => (
-                <tr key={index} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    {transaction.transaction_id}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {formatDate(transaction.transaction_date)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {transaction.sender_name || 'Н/Д'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {transaction.beneficiary_name || 'Н/Д'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {formatAmount(transaction.amount_kzt)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                      transaction.final_risk_score > 7 ? 'text-red-600 bg-red-100' : 'text-yellow-600 bg-yellow-100'
-                    }`}>
-                      {transaction.final_risk_score.toFixed(2)}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <button
-                      onClick={() => setSelectedTransaction(transaction)}
-                      className="text-blue-600 hover:text-blue-900"
-                    >
-                      Подробнее
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {analysisData?.suspicious_transactions?.map((transaction, index) => {
+                // Определяем типы анализа из suspicious_reasons
+                const getAnalysisTypes = (reasons) => {
+                  if (!reasons) return [];
+                  const types = [];
+                  if (reasons.includes('[ТРАНЗ]')) types.push('Т');
+                  if (reasons.includes('[КЛИЕНТ]')) types.push('К');
+                  if (reasons.includes('[СЕТЬ]')) types.push('С');
+                  if (reasons.includes('[ПОВЕД]')) types.push('П');
+                  if (reasons.includes('[ГЕО]')) types.push('Г');
+                  return types;
+                };
+                
+                const analysisTypes = getAnalysisTypes(transaction.suspicious_reasons);
+                
+                return (
+                  <tr key={index} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {transaction.transaction_id}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatDate(transaction.transaction_date)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {transaction.sender_name || 'Н/Д'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {transaction.beneficiary_name || 'Н/Д'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {formatAmount(transaction.amount_kzt)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        transaction.final_risk_score > 7 ? 'text-red-600 bg-red-100' : 'text-yellow-600 bg-yellow-100'
+                      }`}>
+                        {transaction.final_risk_score.toFixed(2)}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex space-x-1">
+                        {analysisTypes.map((type, i) => (
+                          <span key={i} className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-gray-100 text-gray-700">
+                            {type}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <button
+                        onClick={() => setSelectedTransaction(transaction)}
+                        className="text-blue-600 hover:text-blue-900"
+                      >
+                        Подробнее
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
               {(!analysisData?.suspicious_transactions || analysisData.suspicious_transactions.length === 0) && (
                 <tr>
-                  <td colSpan="7" className="px-6 py-4 text-center text-sm text-gray-500">
+                  <td colSpan="8" className="px-6 py-4 text-center text-sm text-gray-500">
                     Подозрительные транзакции не найдены
                   </td>
                 </tr>
@@ -349,6 +416,42 @@ const AnalysisPage = () => {
                           <p key={key} className="text-sm text-gray-900">• {key}</p>
                         )
                       )}
+                    </div>
+                  </div>
+                )}
+                
+                {selectedTransaction.suspicious_reasons && (
+                  <div>
+                    <p className="text-sm font-medium text-gray-500 mb-2">Причины подозрительности</p>
+                    <div className="space-y-1">
+                      {(() => {
+                        try {
+                          // Пытаемся распарсить как JSON
+                          const reasons = typeof selectedTransaction.suspicious_reasons === 'string' 
+                            ? JSON.parse(selectedTransaction.suspicious_reasons)
+                            : selectedTransaction.suspicious_reasons;
+                          
+                          if (Array.isArray(reasons)) {
+                            return reasons.map((reason, idx) => (
+                              <p key={idx} className="text-sm text-gray-900">• {reason}</p>
+                            ));
+                          } else {
+                            // Если не массив, обрабатываем как строку
+                            return selectedTransaction.suspicious_reasons.split(';').map((reason, idx) => 
+                              reason.trim() && (
+                                <p key={idx} className="text-sm text-gray-900">• {reason.trim()}</p>
+                              )
+                            );
+                          }
+                        } catch (e) {
+                          // Если парсинг не удался, обрабатываем как строку
+                          return selectedTransaction.suspicious_reasons.split(';').map((reason, idx) => 
+                            reason.trim() && (
+                              <p key={idx} className="text-sm text-gray-900">• {reason.trim()}</p>
+                            )
+                          );
+                        }
+                      })()}
                     </div>
                   </div>
                 )}

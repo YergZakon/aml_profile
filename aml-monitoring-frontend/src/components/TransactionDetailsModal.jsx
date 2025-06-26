@@ -86,19 +86,41 @@ const TransactionDetailsModal = ({ transaction, onClose }) => {
   // Парсим risk_indicators если это строка JSON
   const getRiskIndicators = () => {
     if (!details) return []
-    if (Array.isArray(details.risk_indicators)) {
-      return details.risk_indicators
-    }
-    if (typeof details.risk_indicators === 'string') {
-      try {
-        return JSON.parse(details.risk_indicators)
-      } catch {
-        return []
+    
+    // Проверяем risk_indicators
+    if (details.risk_indicators) {
+      if (Array.isArray(details.risk_indicators)) {
+        return details.risk_indicators
+      }
+      if (typeof details.risk_indicators === 'string') {
+        try {
+          const parsed = JSON.parse(details.risk_indicators)
+          // Если это объект, а не массив, преобразуем в массив
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            return Object.entries(parsed).map(([key, value]) => `${key}: ${value}`)
+          }
+          return Array.isArray(parsed) ? parsed : []
+        } catch {
+          return []
+        }
       }
     }
+    
+    // Проверяем risk_reasons
     if (details.risk_reasons) {
-      return details.risk_reasons
+      if (Array.isArray(details.risk_reasons)) {
+        return details.risk_reasons
+      }
+      if (typeof details.risk_reasons === 'string') {
+        try {
+          const parsed = JSON.parse(details.risk_reasons)
+          return Array.isArray(parsed) ? parsed : []
+        } catch {
+          return [details.risk_reasons] // Если это просто строка, возвращаем как единственный элемент массива
+        }
+      }
     }
+    
     return []
   }
 
@@ -107,19 +129,34 @@ const TransactionDetailsModal = ({ transaction, onClose }) => {
   // Парсим rule_triggers если это строка JSON
   const getRuleTriggers = () => {
     if (!details) return []
-    if (Array.isArray(details.rule_triggers)) {
-      return details.rule_triggers
-    }
-    if (typeof details.rule_triggers === 'string') {
-      try {
-        return JSON.parse(details.rule_triggers)
-      } catch {
-        return []
+    
+    // Проверяем rule_triggers
+    if (details.rule_triggers) {
+      if (Array.isArray(details.rule_triggers)) {
+        return details.rule_triggers
+      }
+      if (typeof details.rule_triggers === 'string') {
+        try {
+          const parsed = JSON.parse(details.rule_triggers)
+          // Если это объект, а не массив, преобразуем в массив
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            return Object.entries(parsed).map(([key, value]) => `${key}: ${value}`)
+          }
+          return Array.isArray(parsed) ? parsed : []
+        } catch {
+          // Если не удалось распарсить и строка не пустая, возвращаем как единственный элемент
+          return details.rule_triggers.trim() ? [details.rule_triggers] : []
+        }
       }
     }
+    
+    // Проверяем flagged_rules
     if (details.flagged_rules) {
-      return details.flagged_rules
+      if (Array.isArray(details.flagged_rules)) {
+        return details.flagged_rules
+      }
     }
+    
     return []
   }
 
@@ -251,7 +288,7 @@ const TransactionDetailsModal = ({ transaction, onClose }) => {
               </div>
 
               {/* Индикаторы риска */}
-              {riskIndicators.length > 0 && (
+              {Array.isArray(riskIndicators) && riskIndicators.length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-3">
                     Индикаторы риска
@@ -272,7 +309,7 @@ const TransactionDetailsModal = ({ transaction, onClose }) => {
               )}
 
               {/* Сработавшие правила */}
-              {ruleTriggers.length > 0 && (
+              {Array.isArray(ruleTriggers) && ruleTriggers.length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-3">
                     Сработавшие правила
@@ -284,6 +321,39 @@ const TransactionDetailsModal = ({ transaction, onClose }) => {
                           {typeof rule === 'object' ? rule.name || rule.code || JSON.stringify(rule) : rule}
                         </li>
                       ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* Причины подозрительности */}
+              {details.suspicious_reasons && (
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-3">
+                    Причины подозрительности
+                  </h3>
+                  <div className="bg-red-50 rounded-lg p-3">
+                    <ul className="list-disc list-inside space-y-1">
+                      {(() => {
+                        try {
+                          // Пытаемся распарсить как JSON
+                          const reasons = typeof details.suspicious_reasons === 'string' 
+                            ? JSON.parse(details.suspicious_reasons)
+                            : details.suspicious_reasons;
+                          
+                          if (Array.isArray(reasons)) {
+                            return reasons.map((reason, index) => (
+                              <li key={index} className="text-sm text-gray-700">{reason}</li>
+                            ));
+                          } else {
+                            // Если не массив, показываем как есть
+                            return [<li key={0} className="text-sm text-gray-700">{details.suspicious_reasons}</li>];
+                          }
+                        } catch (e) {
+                          // Если парсинг не удался, показываем как есть
+                          return [<li key={0} className="text-sm text-gray-700">{details.suspicious_reasons}</li>];
+                        }
+                      })()}
                     </ul>
                   </div>
                 </div>

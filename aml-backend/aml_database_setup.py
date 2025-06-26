@@ -737,6 +737,14 @@ class AMLDatabaseManager:
         cursor.execute("SELECT * FROM transactions")
         return [dict(row) for row in cursor.fetchall()]
     
+    def get_db_cursor(self):
+        """Получение курсора базы данных"""
+        return self.connection.cursor()
+    
+    def commit(self):
+        """Сохранение изменений в базе данных"""
+        self.connection.commit()
+    
     def close(self):
         """Закрытие соединения с базой данных"""
         if self.connection:

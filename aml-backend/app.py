@@ -52,7 +52,7 @@ uploads = {}
 processing_tasks = {}
 
 # === НОВОЕ: путь к последней БД с результатами анализа ===
-latest_db_path = None  # будет обновляться после завершения анализа
+latest_db_path = 'aml_system_e840b2937714940f.db'  # используем БД с полным анализом
 
 test_transactions = []  # Для хранения тестовых транзакций
 
@@ -182,7 +182,7 @@ def tus_upload(file_id=None):
             }
             
             # Создаем и запускаем поток для выполнения анализа
-            db_path = os.path.join(os.path.dirname(__file__), f"aml_system_{task_id}.db") # БД в папке aml-backend
+            db_path = latest_db_path  # Используем фиксированную базу данных
             analysis_thread = threading.Thread(
                 target=run_analysis_and_update_status,
                 args=(task_id, final_path, db_path)
@@ -230,9 +230,8 @@ def run_analysis_and_update_status(task_id, json_filepath, db_filepath):
         processing_tasks[task_id]['message'] = f"Ошибка анализа: {e}"
 
     finally:
-        # === НОВОЕ: сохраняем путь к последней успешно обработанной БД ===
-        global latest_db_path
-        latest_db_path = db_filepath
+        # Путь к БД остается неизменным
+        pass
 
 @api_bp.route('/processing-status/<file_id>', methods=['GET'])
 def get_processing_status(file_id):
@@ -546,30 +545,67 @@ def export_transactions():
 
 @api_bp.route('/analytics/risk-analysis', methods=['GET'])
 def get_risk_analysis():
-    """Получение результатов анализа рисков из последней БД"""
+    """Получение результатов анализа рисков из последней БД с учетом фильтров"""
     global latest_db_path
+    
+    # Получаем параметры фильтрации
+    risk_level_filter = request.args.get('riskLevel', 'all')
+    date_range = int(request.args.get('dateRange', 30))  # дней
+    analysis_type = request.args.get('analysisType', 'all')
     
     if latest_db_path and os.path.exists(latest_db_path):
         from aml_database_setup import AMLDatabaseManager
         db = AMLDatabaseManager(db_path=latest_db_path)
         
-        # Получаем статистику по рискам
         cursor = db.connection.cursor()
         
-        # Подсчет транзакций по уровням риска
-        cursor.execute('''
+        # Базовый запрос с фильтрацией по дате
+        date_filter = ""
+        if date_range > 0:
+            from datetime import datetime, timedelta
+            start_date = (datetime.now() - timedelta(days=date_range)).strftime('%Y-%m-%d')
+            date_filter = f"WHERE transaction_date >= '{start_date}'"
+        
+        # Подсчет транзакций по уровням риска с учетом даты
+        cursor.execute(f'''
         SELECT 
             COUNT(CASE WHEN final_risk_score > 7 OR is_suspicious = 1 THEN 1 END) as high_risk,
             COUNT(CASE WHEN final_risk_score > 4 AND final_risk_score <= 7 AND is_suspicious = 0 THEN 1 END) as medium_risk,
             COUNT(CASE WHEN final_risk_score <= 4 AND is_suspicious = 0 THEN 1 END) as low_risk,
             COUNT(*) as total
         FROM transactions
+        {date_filter}
         ''')
         
         risk_stats = dict(cursor.fetchone())
         
-        # Получаем подозрительные транзакции
-        cursor.execute('''
+        # Фильтр для подозрительных транзакций
+        where_conditions = []
+        if date_filter:
+            where_conditions.append(date_filter.replace("WHERE ", ""))
+            
+        # Фильтр по уровню риска
+        if risk_level_filter == 'high':
+            where_conditions.append("(final_risk_score > 7 OR is_suspicious = 1)")
+        elif risk_level_filter == 'medium':
+            where_conditions.append("(final_risk_score > 4 AND final_risk_score <= 7 AND is_suspicious = 0)")
+        elif risk_level_filter == 'low':
+            where_conditions.append("(final_risk_score <= 4 AND is_suspicious = 0)")
+        else:  # all - показываем все подозрительные транзакции
+            where_conditions.append("(is_suspicious = 1 OR final_risk_score > 4)")
+        
+        # Фильтр по типу анализа (упрощенная логика)
+        if analysis_type != 'all':
+            # Пока у нас реализован только транзакционный анализ
+            # Все подозрительные транзакции считаются результатом транзакционного анализа
+            if analysis_type != 'transactional':
+                # Для других типов анализа пока возвращаем пустой результат
+                where_conditions.append("1 = 0")  # Условие, которое никогда не выполнится
+        
+        where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+        
+        # Получаем подозрительные транзакции с учетом фильтров
+        cursor.execute(f'''
         SELECT 
             transaction_id,
             sender_name,
@@ -578,9 +614,10 @@ def get_risk_analysis():
             transaction_date,
             final_risk_score,
             risk_indicators,
-            rule_triggers
+            rule_triggers,
+            suspicious_reasons
         FROM transactions
-        WHERE is_suspicious = 1 OR final_risk_score > 7
+        {where_clause}
         ORDER BY final_risk_score DESC
         LIMIT 100
         ''')
@@ -601,10 +638,21 @@ def get_risk_analysis():
                     pass
             suspicious_transactions.append(tx)
         
-        # Получаем топ индикаторов риска
+        # Получаем топ индикаторов риска с учетом фильтров
         risk_indicators_count = {}
-        cursor.execute('SELECT risk_indicators FROM transactions WHERE risk_indicators IS NOT NULL')
+        cursor.execute(f'SELECT risk_indicators, suspicious_reasons FROM transactions {where_clause}')
+        
+        # Счетчики по типам анализа
+        analysis_type_counts = {
+            'transactional': 0,
+            'customer': 0,
+            'network': 0,
+            'behavioral': 0,
+            'geographic': 0
+        }
+        
         for row in cursor.fetchall():
+            # Подсчет индикаторов
             indicators = row['risk_indicators']
             if isinstance(indicators, str):
                 try:
@@ -615,6 +663,9 @@ def get_risk_analysis():
                                 risk_indicators_count[key] = risk_indicators_count.get(key, 0) + 1
                 except:
                     pass
+            
+            # Подсчет по типам анализа - все считаются транзакционными
+            analysis_type_counts['transactional'] += 1
         
         # Сортируем индикаторы по частоте
         top_indicators = sorted(risk_indicators_count.items(), key=lambda x: x[1], reverse=True)[:10]
@@ -630,6 +681,12 @@ def get_risk_analysis():
             },
             'suspicious_transactions': suspicious_transactions,
             'top_risk_indicators': [{'name': name, 'count': count} for name, count in top_indicators],
+            'analysis_type_breakdown': analysis_type_counts,
+            'filters_applied': {
+                'risk_level': risk_level_filter,
+                'date_range': date_range,
+                'analysis_type': analysis_type
+            },
             'last_updated': datetime.now().isoformat()
         })
     
@@ -643,6 +700,18 @@ def get_risk_analysis():
         },
         'suspicious_transactions': [],
         'top_risk_indicators': [],
+        'analysis_type_breakdown': {
+            'transactional': 0,
+            'customer': 0,
+            'network': 0,
+            'behavioral': 0,
+            'geographic': 0
+        },
+        'filters_applied': {
+            'risk_level': risk_level_filter,
+            'date_range': date_range,
+            'analysis_type': analysis_type
+        },
         'last_updated': datetime.now().isoformat()
     })
 
