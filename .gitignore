@@ -20,6 +20,10 @@ build/
 # Analysis results
 analysis_results.json
 results/
+*.json
+*_results*.json
+unified_aml_report_*.json
+aml_pipeline_*.json
 
 # Uploads
 uploads/

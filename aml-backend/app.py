@@ -555,241 +555,265 @@ def get_risk_analysis():
     
     if latest_db_path and os.path.exists(latest_db_path):
         from aml_database_setup import AMLDatabaseManager
-        db = AMLDatabaseManager(db_path=latest_db_path)
-        
-        cursor = db.connection.cursor()
-        
-        # Базовый запрос с фильтрацией по дате
-        date_filter = ""
-        if date_range > 0:
-            from datetime import datetime, timedelta
-            start_date = (datetime.now() - timedelta(days=date_range)).strftime('%Y-%m-%d')
-            date_filter = f"WHERE transaction_date >= '{start_date}'"
-        
-        # Подсчет транзакций по уровням риска с учетом даты
-        cursor.execute(f'''
-        SELECT 
-            COUNT(CASE WHEN final_risk_score > 7 OR is_suspicious = 1 THEN 1 END) as high_risk,
-            COUNT(CASE WHEN final_risk_score > 4 AND final_risk_score <= 7 AND is_suspicious = 0 THEN 1 END) as medium_risk,
-            COUNT(CASE WHEN final_risk_score <= 4 AND is_suspicious = 0 THEN 1 END) as low_risk,
-            COUNT(*) as total
-        FROM transactions
-        {date_filter}
-        ''')
-        
-        risk_stats = dict(cursor.fetchone())
-        
-        # Фильтр для подозрительных транзакций
-        where_conditions = []
-        if date_filter:
-            where_conditions.append(date_filter.replace("WHERE ", ""))
-            
-        # Фильтр по уровню риска
-        if risk_level_filter == 'high':
-            where_conditions.append("(final_risk_score > 7 OR is_suspicious = 1)")
-        elif risk_level_filter == 'medium':
-            where_conditions.append("(final_risk_score > 4 AND final_risk_score <= 7 AND is_suspicious = 0)")
-        elif risk_level_filter == 'low':
-            where_conditions.append("(final_risk_score <= 4 AND is_suspicious = 0)")
-        else:  # all - показываем все подозрительные транзакции
-            where_conditions.append("(is_suspicious = 1 OR final_risk_score > 4)")
-        
-        where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
-        
-        # Фильтр по типу анализа
-        if analysis_type != 'all':
-            # Получаем все подозрительные транзакции для фильтрации
-            cursor.execute(f'''
-            SELECT 
-                transaction_id,
-                sender_name,
-                beneficiary_name,
-                amount_kzt,
-                transaction_date,
-                final_risk_score,
-                risk_indicators,
-                rule_triggers,
-                suspicious_reasons
-            FROM transactions
-            {where_clause}
-            ORDER BY final_risk_score DESC
-            ''')
-            
-            # Фильтруем по типу анализа после получения данных
-            filtered_transactions = []
-            for row in cursor.fetchall():
-                tx = dict(row)
-                rule_triggers = tx.get('rule_triggers')
+        try:
+            with AMLDatabaseManager(db_path=latest_db_path) as db:
+                cursor = db.connection.cursor()
                 
-                if rule_triggers and isinstance(rule_triggers, str):
-                    try:
-                        rules = json.loads(rule_triggers)
-                        if isinstance(rules, list):
-                            should_include = False
-                            
-                            for rule in rules:
-                                rule_lower = rule.lower()
+                # Базовый запрос с фильтрацией по дате
+                date_filter = ""
+                if date_range > 0:
+                    from datetime import datetime, timedelta
+                    start_date = (datetime.now() - timedelta(days=date_range)).strftime('%Y-%m-%d')
+                    date_filter = f"WHERE transaction_date >= '{start_date}'"
+                
+                # Подсчет транзакций по уровням риска с учетом даты
+                cursor.execute(f'''
+                SELECT 
+                    COUNT(CASE WHEN final_risk_score > 7 OR is_suspicious = 1 THEN 1 END) as high_risk,
+                    COUNT(CASE WHEN final_risk_score > 4 AND final_risk_score <= 7 AND is_suspicious = 0 THEN 1 END) as medium_risk,
+                    COUNT(CASE WHEN final_risk_score <= 4 AND is_suspicious = 0 THEN 1 END) as low_risk,
+                    COUNT(*) as total
+                FROM transactions
+                {date_filter}
+                ''')
+                
+                risk_stats = dict(cursor.fetchone())
+                
+                # Фильтр для подозрительных транзакций
+                where_conditions = []
+                if date_filter:
+                    where_conditions.append(date_filter.replace("WHERE ", ""))
+                    
+                # Фильтр по уровню риска
+                if risk_level_filter == 'high':
+                    where_conditions.append("(final_risk_score > 7 OR is_suspicious = 1)")
+                elif risk_level_filter == 'medium':
+                    where_conditions.append("(final_risk_score > 4 AND final_risk_score <= 7 AND is_suspicious = 0)")
+                elif risk_level_filter == 'low':
+                    where_conditions.append("(final_risk_score <= 4 AND is_suspicious = 0)")
+                else:  # all - показываем все подозрительные транзакции
+                    where_conditions.append("(is_suspicious = 1 OR final_risk_score > 4)")
+                
+                where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+                
+                # Фильтр по типу анализа
+                if analysis_type != 'all':
+                    # Получаем все подозрительные транзакции для фильтрации
+                    cursor.execute(f'''
+                    SELECT 
+                        transaction_id,
+                        sender_name,
+                        beneficiary_name,
+                        amount_kzt,
+                        transaction_date,
+                        final_risk_score,
+                        risk_indicators,
+                        rule_triggers,
+                        suspicious_reasons
+                    FROM transactions
+                    {where_clause}
+                    ORDER BY final_risk_score DESC
+                    ''')
+                    
+                    # Фильтруем по типу анализа после получения данных
+                    filtered_transactions = []
+                    for row in cursor.fetchall():
+                        tx = dict(row)
+                        rule_triggers = tx.get('rule_triggers')
+                        
+                        if rule_triggers and isinstance(rule_triggers, str):
+                            try:
+                                rules = json.loads(rule_triggers)
+                                if isinstance(rules, list):
+                                    should_include = False
+                                    
+                                    for rule in rules:
+                                        rule_lower = rule.lower()
+                                        
+                                        if analysis_type == 'transactional' and any(keyword in rule_lower for keyword in ['круглая', 'сумма', 'время', 'назначение']):
+                                            should_include = True
+                                            break
+                                        elif analysis_type == 'network' and any(keyword in rule for keyword in ['СЕТЬ', 'схема', 'дробление']):
+                                            should_include = True
+                                            break
+                                        elif analysis_type == 'behavioral' and any(keyword in rule for keyword in ['ПОВЕДЕНИЕ', 'география']):
+                                            should_include = True
+                                            break
+                                        elif analysis_type == 'customer' and 'контрагент' in rule_lower:
+                                            should_include = True
+                                            break
+                                        elif analysis_type == 'geographic' and any(keyword in rule_lower for keyword in ['страна', 'юрисдикция']):
+                                            should_include = True
+                                            break
+                                    
+                                    if should_include:
+                                        # Парсим JSON поля если нужно
+                                        if tx.get('risk_indicators') and isinstance(tx['risk_indicators'], str):
+                                            try:
+                                                tx['risk_indicators'] = json.loads(tx['risk_indicators'])
+                                            except:
+                                                pass
+                                        if tx.get('rule_triggers') and isinstance(tx['rule_triggers'], str):
+                                            try:
+                                                tx['rule_triggers'] = json.loads(tx['rule_triggers'])
+                                            except:
+                                                pass
+                                        filtered_transactions.append(tx)
+                            except:
+                                pass
+                    
+                    suspicious_transactions = filtered_transactions[:100]  # Ограничиваем до 100
+                else:
+                    # Если фильтр не применен, используем обычный запрос
+                    cursor.execute(f'''
+                    SELECT 
+                        transaction_id,
+                        sender_name,
+                        beneficiary_name,
+                        amount_kzt,
+                        transaction_date,
+                        final_risk_score,
+                        risk_indicators,
+                        rule_triggers,
+                        suspicious_reasons
+                    FROM transactions
+                    {where_clause}
+                    ORDER BY final_risk_score DESC
+                    LIMIT 100
+                    ''')
+                    
+                    suspicious_transactions = []
+                    for row in cursor.fetchall():
+                        tx = dict(row)
+                        # Парсим JSON поля если нужно
+                        if tx.get('risk_indicators') and isinstance(tx['risk_indicators'], str):
+                            try:
+                                tx['risk_indicators'] = json.loads(tx['risk_indicators'])
+                            except:
+                                pass
+                        if tx.get('rule_triggers') and isinstance(tx['rule_triggers'], str):
+                            try:
+                                tx['rule_triggers'] = json.loads(tx['rule_triggers'])
+                            except:
+                                pass
+                        suspicious_transactions.append(tx)
+                
+                # Получаем топ индикаторов риска с учетом фильтров
+                risk_indicators_count = {}
+                cursor.execute(f'SELECT risk_indicators, rule_triggers FROM transactions {where_clause}')
+                
+                # Счетчики по типам анализа
+                analysis_type_counts = {
+                    'transactional': 0,
+                    'customer': 0,
+                    'network': 0,
+                    'behavioral': 0,
+                    'geographic': 0
+                }
+                
+                for row in cursor.fetchall():
+                    # Подсчет индикаторов
+                    indicators = row[0] if len(row) > 0 else None
+                    if isinstance(indicators, str):
+                        try:
+                            indicators = json.loads(indicators)
+                            if isinstance(indicators, dict):
+                                for key, value in indicators.items():
+                                    if value:
+                                        risk_indicators_count[key] = risk_indicators_count.get(key, 0) + 1
+                        except:
+                            pass
+                    
+                    # Подсчет по типам анализа на основе rule_triggers
+                    rule_triggers = row[1] if len(row) > 1 else None
+                    if rule_triggers and isinstance(rule_triggers, str):
+                        try:
+                            rules = json.loads(rule_triggers)
+                            if isinstance(rules, list):
+                                has_transactional = False
+                                has_network = False
+                                has_behavioral = False
+                                has_customer = False
+                                has_geographic = False
                                 
-                                if analysis_type == 'transactional' and any(keyword in rule_lower for keyword in ['круглая', 'сумма', 'время', 'назначение']):
-                                    should_include = True
-                                    break
-                                elif analysis_type == 'network' and any(keyword in rule for keyword in ['СЕТЬ', 'схема', 'дробление']):
-                                    should_include = True
-                                    break
-                                elif analysis_type == 'behavioral' and any(keyword in rule for keyword in ['ПОВЕДЕНИЕ', 'география']):
-                                    should_include = True
-                                    break
-                                elif analysis_type == 'customer' and 'контрагент' in rule_lower:
-                                    should_include = True
-                                    break
-                                elif analysis_type == 'geographic' and any(keyword in rule_lower for keyword in ['страна', 'юрисдикция']):
-                                    should_include = True
-                                    break
-                            
-                            if should_include:
-                                # Парсим JSON поля если нужно
-                                if tx.get('risk_indicators') and isinstance(tx['risk_indicators'], str):
-                                    try:
-                                        tx['risk_indicators'] = json.loads(tx['risk_indicators'])
-                                    except:
-                                        pass
-                                if tx.get('rule_triggers') and isinstance(tx['rule_triggers'], str):
-                                    try:
-                                        tx['rule_triggers'] = json.loads(tx['rule_triggers'])
-                                    except:
-                                        pass
-                                filtered_transactions.append(tx)
-                    except:
-                        pass
-            
-            suspicious_transactions = filtered_transactions[:100]  # Ограничиваем до 100
-        else:
-            # Если фильтр не применен, используем обычный запрос
-            cursor.execute(f'''
-            SELECT 
-                transaction_id,
-                sender_name,
-                beneficiary_name,
-                amount_kzt,
-                transaction_date,
-                final_risk_score,
-                risk_indicators,
-                rule_triggers,
-                suspicious_reasons
-            FROM transactions
-            {where_clause}
-            ORDER BY final_risk_score DESC
-            LIMIT 100
-            ''')
-            
-            suspicious_transactions = []
-            for row in cursor.fetchall():
-                tx = dict(row)
-                # Парсим JSON поля если нужно
-                if tx.get('risk_indicators') and isinstance(tx['risk_indicators'], str):
-                    try:
-                        tx['risk_indicators'] = json.loads(tx['risk_indicators'])
-                    except:
-                        pass
-                if tx.get('rule_triggers') and isinstance(tx['rule_triggers'], str):
-                    try:
-                        tx['rule_triggers'] = json.loads(tx['rule_triggers'])
-                    except:
-                        pass
-                suspicious_transactions.append(tx)
-        
-        # Получаем топ индикаторов риска с учетом фильтров
-        risk_indicators_count = {}
-        cursor.execute(f'SELECT risk_indicators, rule_triggers FROM transactions {where_clause}')
-        
-        # Счетчики по типам анализа
-        analysis_type_counts = {
-            'transactional': 0,
-            'customer': 0,
-            'network': 0,
-            'behavioral': 0,
-            'geographic': 0
-        }
-        
-        for row in cursor.fetchall():
-            # Подсчет индикаторов
-            indicators = row[0] if len(row) > 0 else None
-            if isinstance(indicators, str):
-                try:
-                    indicators = json.loads(indicators)
-                    if isinstance(indicators, dict):
-                        for key, value in indicators.items():
-                            if value:
-                                risk_indicators_count[key] = risk_indicators_count.get(key, 0) + 1
-                except:
-                    pass
-            
-            # Подсчет по типам анализа на основе rule_triggers
-            rule_triggers = row[1] if len(row) > 1 else None
-            if rule_triggers and isinstance(rule_triggers, str):
-                try:
-                    rules = json.loads(rule_triggers)
-                    if isinstance(rules, list):
-                        has_transactional = False
-                        has_network = False
-                        has_behavioral = False
-                        has_customer = False
-                        has_geographic = False
-                        
-                        for rule in rules:
-                            rule_lower = rule.lower()
-                            # Транзакционный анализ
-                            if any(keyword in rule_lower for keyword in ['круглая', 'сумма', 'время', 'назначение']):
-                                has_transactional = True
-                            # Сетевой анализ
-                            elif any(keyword in rule_lower for keyword in ['сеть', 'схема', 'дробление']):
-                                has_network = True
-                            # Поведенческий анализ
-                            elif any(keyword in rule_lower for keyword in ['поведение', 'география']):
-                                has_behavioral = True
-                            # Клиентский анализ
-                            elif 'контрагент' in rule_lower:
-                                has_customer = True
-                            # Географический анализ
-                            elif any(keyword in rule_lower for keyword in ['страна', 'юрисдикция']):
-                                has_geographic = True
-                        
-                        # Увеличиваем счетчики
-                        if has_transactional:
-                            analysis_type_counts['transactional'] += 1
-                        if has_network:
-                            analysis_type_counts['network'] += 1
-                        if has_behavioral:
-                            analysis_type_counts['behavioral'] += 1
-                        if has_customer:
-                            analysis_type_counts['customer'] += 1
-                        if has_geographic:
-                            analysis_type_counts['geographic'] += 1
-                except:
-                    pass
-        
-        # Сортируем индикаторы по частоте
-        top_indicators = sorted(risk_indicators_count.items(), key=lambda x: x[1], reverse=True)[:10]
-        
-        db.close()
-        
-        return jsonify({
-            'risk_summary': {
-                'high': risk_stats['high_risk'] or 0,
-                'medium': risk_stats['medium_risk'] or 0,
-                'low': risk_stats['low_risk'] or 0,
-                'total': risk_stats['total'] or 0
-            },
-            'suspicious_transactions': suspicious_transactions,
-            'top_risk_indicators': [{'name': name, 'count': count} for name, count in top_indicators],
-            'analysis_type_breakdown': analysis_type_counts,
-            'filters_applied': {
-                'risk_level': risk_level_filter,
-                'date_range': date_range,
-                'analysis_type': analysis_type
-            },
-            'last_updated': datetime.now().isoformat()
-        })
+                                for rule in rules:
+                                    rule_lower = rule.lower()
+                                    # Транзакционный анализ
+                                    if any(keyword in rule_lower for keyword in ['круглая', 'сумма', 'время', 'назначение']):
+                                        has_transactional = True
+                                    # Сетевой анализ
+                                    elif any(keyword in rule_lower for keyword in ['сеть', 'схема', 'дробление']):
+                                        has_network = True
+                                    # Поведенческий анализ
+                                    elif any(keyword in rule_lower for keyword in ['поведение', 'география']):
+                                        has_behavioral = True
+                                    # Клиентский анализ
+                                    elif 'контрагент' in rule_lower:
+                                        has_customer = True
+                                    # Географический анализ
+                                    elif any(keyword in rule_lower for keyword in ['страна', 'юрисдикция']):
+                                        has_geographic = True
+                                
+                                # Увеличиваем счетчики
+                                if has_transactional:
+                                    analysis_type_counts['transactional'] += 1
+                                if has_network:
+                                    analysis_type_counts['network'] += 1
+                                if has_behavioral:
+                                    analysis_type_counts['behavioral'] += 1
+                                if has_customer:
+                                    analysis_type_counts['customer'] += 1
+                                if has_geographic:
+                                    analysis_type_counts['geographic'] += 1
+                        except:
+                            pass
+                
+                # Сортируем индикаторы по частоте
+                top_indicators = sorted(risk_indicators_count.items(), key=lambda x: x[1], reverse=True)[:10]
+                
+                return jsonify({
+                    'risk_summary': {
+                        'high': risk_stats['high_risk'] or 0,
+                        'medium': risk_stats['medium_risk'] or 0,
+                        'low': risk_stats['low_risk'] or 0,
+                        'total': risk_stats['total'] or 0
+                    },
+                    'suspicious_transactions': suspicious_transactions,
+                    'top_risk_indicators': [{'name': name, 'count': count} for name, count in top_indicators],
+                    'analysis_type_breakdown': analysis_type_counts,
+                    'filters_applied': {
+                        'risk_level': risk_level_filter,
+                        'date_range': date_range,
+                        'analysis_type': analysis_type
+                    },
+                    'last_updated': datetime.now().isoformat()
+                })
+        except Exception as e:
+            print(f"Ошибка при получении анализа рисков: {e}")  
+            return jsonify({
+                'risk_summary': {
+                    'high': 0,
+                    'medium': 0,
+                    'low': 0,
+                    'total': 0
+                },
+                'suspicious_transactions': [],
+                'top_risk_indicators': [],
+                'analysis_type_breakdown': {
+                    'transactional': 0,
+                    'customer': 0,
+                    'network': 0,
+                    'behavioral': 0,
+                    'geographic': 0
+                },
+                'filters_applied': {
+                    'risk_level': risk_level_filter,
+                    'date_range': date_range,
+                    'analysis_type': analysis_type
+                },
+                'last_updated': datetime.now().isoformat(),
+                'error': str(e)
+            })
     
     # Если БД не инициализирована
     return jsonify({

@@ -19,17 +19,39 @@ class AMLDatabaseManager:
         """Инициализация базы данных и создание всех таблиц"""
         print(f"🗄️ Инициализация базы данных: {self.db_path}")
         
-        # Создаем соединение
-        self.connection = sqlite3.connect(self.db_path)
+        # Создаем соединение с timeout для избежания блокировок
+        self.connection = sqlite3.connect(self.db_path, timeout=20.0)
         self.connection.row_factory = sqlite3.Row  # Для удобной работы с результатами
         
-        # Включаем поддержку внешних ключей
+        # Включаем поддержку внешних ключей и настраиваем WAL режим
         self.connection.execute("PRAGMA foreign_keys = ON")
+        self.connection.execute("PRAGMA journal_mode = WAL")
+        self.connection.execute("PRAGMA synchronous = NORMAL")
+        self.connection.execute("PRAGMA cache_size = 10000")
+        self.connection.execute("PRAGMA temp_store = memory")
         
         # Создаем все таблицы
         self._create_tables()
         
         print("✅ База данных успешно инициализирована")
+    
+    def __enter__(self):
+        """Поддержка контекстного менеджера"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Автоматическое закрытие соединения"""
+        self.close()
+    
+    def close(self):
+        """Безопасное закрытие соединения с базой данных"""
+        if self.connection:
+            try:
+                self.connection.close()
+                self.connection = None
+                print("🔒 Соединение с базой данных закрыто")
+            except Exception as e:
+                print(f"⚠️ Ошибка при закрытии БД: {e}")
         
     def _create_tables(self):
         """Создание всех таблиц для профилей"""
@@ -377,11 +399,17 @@ class AMLDatabaseManager:
     # МЕТОДЫ ДЛЯ РАБОТЫ С КЛИЕНТСКИМИ ПРОФИЛЯМИ
     # =====================================================
     
-    def save_customer_profile(self, profile_data: Dict) -> bool:
+    def save_customer_profile(self, profile_data: Dict, silent: bool = False) -> bool:
         """Сохранение или обновление клиентского профиля"""
         cursor = self.connection.cursor()
         
         try:
+            customer_id = profile_data['customer_id']
+            
+            # Проверяем, существует ли профиль
+            cursor.execute('SELECT customer_id FROM customer_profiles WHERE customer_id = ?', (customer_id,))
+            exists = cursor.fetchone() is not None
+            
             # Конвертируем сложные объекты в JSON
             behavior_patterns = json.dumps(profile_data.get('behavior_patterns', {}))
             typical_counterparties = json.dumps(profile_data.get('typical_counterparties', []))
@@ -429,7 +457,14 @@ class AMLDatabaseManager:
             ))
             
             self.connection.commit()
-            print(f"✅ Профиль клиента {profile_data['customer_id']} сохранен")
+            
+            # Выводим сообщение только если не в тихом режиме
+            if not silent:
+                if exists:
+                    print(f"🔄 Профиль клиента {customer_id} обновлен")
+                else:
+                    print(f"✅ Профиль клиента {customer_id} создан")
+            
             return True
             
         except Exception as e:
