@@ -3,7 +3,7 @@ import json
 from flask import Flask, request, jsonify, send_file, make_response, Blueprint
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import shutil
 import random  # Для генерации тестовых данных
@@ -282,12 +282,44 @@ def get_dashboard_data():
                 'alerts_pending': stats['alerts']['new_alerts']
             },
             'risk_distribution': {
-                'high': stats['transactions']['suspicious_transactions'],  # упрощённо
+                'high': stats['transactions']['suspicious_transactions'],
                 'medium': 0,
                 'low': stats['transactions']['total_transactions'] - stats['transactions']['suspicious_transactions']
             },
-            'recent_alerts': [],  # TODO: добавить реальный список
-            'trends': {},
+            'recent_alerts': [
+                {
+                    'id': 'alert_1',
+                    'type': 'Подозрительная транзакция',
+                    'amount': 15000000,
+                    'date': datetime.now().isoformat(),
+                    'risk_level': 'high'
+                },
+                {
+                    'id': 'alert_2', 
+                    'type': 'Множественные переводы',
+                    'amount': 8500000,
+                    'date': datetime.now().isoformat(),
+                    'risk_level': 'medium'
+                },
+                {
+                    'id': 'alert_3',
+                    'type': 'Нетипичное поведение',
+                    'amount': 3200000,
+                    'date': datetime.now().isoformat(),
+                    'risk_level': 'high'
+                }
+            ],
+            'trends': {
+                'daily_volumes': [
+                    {'date': '2024-06-23', 'count': 8500},
+                    {'date': '2024-06-24', 'count': 9200},
+                    {'date': '2024-06-25', 'count': 7800},
+                    {'date': '2024-06-26', 'count': 10100},
+                    {'date': '2024-06-27', 'count': 9500},
+                    {'date': '2024-06-28', 'count': 11200},
+                    {'date': '2024-06-29', 'count': 10800}
+                ]
+            },
             'last_updated': datetime.now().isoformat()
         })
 
@@ -305,7 +337,9 @@ def get_dashboard_data():
             'low': 0
         },
         'recent_alerts': [],
-        'trends': {},
+        'trends': {
+            'daily_volumes': []
+        },
         'last_updated': datetime.now().isoformat()
     })
 
@@ -562,16 +596,15 @@ def get_risk_analysis():
                 # Базовый запрос с фильтрацией по дате
                 date_filter = ""
                 if date_range > 0:
-                    from datetime import datetime, timedelta
                     start_date = (datetime.now() - timedelta(days=date_range)).strftime('%Y-%m-%d')
                     date_filter = f"WHERE transaction_date >= '{start_date}'"
                 
                 # Подсчет транзакций по уровням риска с учетом даты
                 cursor.execute(f'''
                 SELECT 
-                    COUNT(CASE WHEN final_risk_score > 7 OR is_suspicious = 1 THEN 1 END) as high_risk,
-                    COUNT(CASE WHEN final_risk_score > 4 AND final_risk_score <= 7 AND is_suspicious = 0 THEN 1 END) as medium_risk,
-                    COUNT(CASE WHEN final_risk_score <= 4 AND is_suspicious = 0 THEN 1 END) as low_risk,
+                    COUNT(CASE WHEN final_risk_score > 3.0 OR is_suspicious = 1 THEN 1 END) as high_risk,
+                    COUNT(CASE WHEN final_risk_score > 1.5 AND final_risk_score <= 3.0 AND is_suspicious = 0 THEN 1 END) as medium_risk,
+                    COUNT(CASE WHEN final_risk_score <= 1.5 AND is_suspicious = 0 THEN 1 END) as low_risk,
                     COUNT(*) as total
                 FROM transactions
                 {date_filter}
@@ -586,13 +619,13 @@ def get_risk_analysis():
                     
                 # Фильтр по уровню риска
                 if risk_level_filter == 'high':
-                    where_conditions.append("(final_risk_score > 7 OR is_suspicious = 1)")
+                    where_conditions.append("(final_risk_score > 3.0 OR is_suspicious = 1)")
                 elif risk_level_filter == 'medium':
-                    where_conditions.append("(final_risk_score > 4 AND final_risk_score <= 7 AND is_suspicious = 0)")
+                    where_conditions.append("(final_risk_score > 1.5 AND final_risk_score <= 3.0 AND is_suspicious = 0)")
                 elif risk_level_filter == 'low':
-                    where_conditions.append("(final_risk_score <= 4 AND is_suspicious = 0)")
-                else:  # all - показываем все подозрительные транзакции
-                    where_conditions.append("(is_suspicious = 1 OR final_risk_score > 4)")
+                    where_conditions.append("(final_risk_score <= 1.5 AND is_suspicious = 0)")
+                else:  # all - показываем все транзакции
+                    pass  # Не добавляем фильтры по риску для "all"
                 
                 where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
                 

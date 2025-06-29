@@ -284,9 +284,9 @@ class UnifiedAMLPipeline:
                 'transaction': TransactionProfile(),
                 'customer': CustomerProfile(),
                 'network': NetworkProfile(), 
-                'behavioral': BehavioralProfile(),
                 'geographic': GeographicProfile()
             }
+            # BehavioralProfile будет создан для каждого клиента индивидуально
             logger.info("✅ Все анализаторы успешно инициализированы")
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации анализаторов: {e}")
@@ -477,7 +477,9 @@ class UnifiedAMLPipeline:
         
         # 4. Поведенческий анализ
         try:
-            behavioral_risk = self.analyzers['behavioral'].analyze_behavior(client_id, transaction)
+            # Создаем BehavioralProfile для конкретного клиента
+            behavioral_analyzer = BehavioralProfile(client_id)
+            behavioral_risk = behavioral_analyzer.analyze_behavior(client_id, transaction)
             risks['behavioral'] = behavioral_risk.get('risk_score', 0.0)
             if behavioral_risk.get('anomalies'):
                 explanations.extend(behavioral_risk['anomalies'])
