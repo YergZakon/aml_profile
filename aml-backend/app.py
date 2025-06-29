@@ -343,6 +343,180 @@ def get_dashboard_data():
         'last_updated': datetime.now().isoformat()
     })
 
+@api_bp.route('/analytics/network-graph', methods=['GET'])
+def get_network_graph():
+    """Получение данных для сетевого графа клиентских связей"""
+    global latest_db_path
+    
+    # Параметры запроса
+    limit = int(request.args.get('limit', 100))
+    min_amount = float(request.args.get('min_amount', 1000000))  # Минимальная сумма транзакций
+    days_back = int(request.args.get('days', 30))
+    
+    if latest_db_path and os.path.exists(latest_db_path):
+        try:
+            from aml_database_setup import AMLDatabaseManager
+            with AMLDatabaseManager(db_path=latest_db_path) as db:
+                cursor = db.connection.cursor()
+                
+                # Получаем связи между клиентами на основе транзакций
+                cursor.execute('''
+                SELECT 
+                    sender_id,
+                    sender_name,
+                    beneficiary_id, 
+                    beneficiary_name,
+                    COUNT(*) as transaction_count,
+                    SUM(amount_kzt) as total_amount,
+                    AVG(final_risk_score) as avg_risk_score,
+                    MAX(final_risk_score) as max_risk_score,
+                    GROUP_CONCAT(DISTINCT 
+                        CASE WHEN is_suspicious THEN transaction_id END
+                    ) as suspicious_transactions
+                FROM transactions
+                WHERE sender_id IS NOT NULL 
+                    AND beneficiary_id IS NOT NULL
+                    AND sender_id != beneficiary_id
+                    AND amount_kzt >= ?
+                    AND datetime(transaction_date) >= datetime('now', '-{} days')
+                GROUP BY sender_id, beneficiary_id
+                HAVING total_amount >= ?
+                ORDER BY total_amount DESC, avg_risk_score DESC
+                LIMIT ?
+                '''.format(days_back), (min_amount, min_amount, limit))
+                
+                connections = cursor.fetchall()
+                
+                # Создаем множества узлов и связей
+                nodes = {}
+                edges = []
+                
+                for conn in connections:
+                    sender_id, sender_name, beneficiary_id, beneficiary_name, \
+                    tx_count, total_amount, avg_risk, max_risk, suspicious_txs = conn
+                    
+                    # Добавляем узлы
+                    if sender_id not in nodes:
+                        # Получаем дополнительную информацию о клиенте
+                        cursor.execute('''
+                        SELECT COUNT(*) as total_tx, SUM(amount_kzt) as total_vol, 
+                               AVG(final_risk_score) as client_risk
+                        FROM transactions 
+                        WHERE sender_id = ? OR beneficiary_id = ?
+                        ''', (sender_id, sender_id))
+                        
+                        client_stats = cursor.fetchone()
+                        nodes[sender_id] = {
+                            'id': sender_id,
+                            'name': sender_name or f"Клиент {sender_id}",
+                            'type': 'sender',
+                            'total_transactions': client_stats[0] if client_stats else 0,
+                            'total_volume': client_stats[1] if client_stats else 0,
+                            'risk_score': client_stats[2] if client_stats else 0,
+                            'size': min(50, max(10, (client_stats[1] or 0) / 10000000))  # Размер узла
+                        }
+                    
+                    if beneficiary_id not in nodes:
+                        cursor.execute('''
+                        SELECT COUNT(*) as total_tx, SUM(amount_kzt) as total_vol,
+                               AVG(final_risk_score) as client_risk  
+                        FROM transactions
+                        WHERE sender_id = ? OR beneficiary_id = ?
+                        ''', (beneficiary_id, beneficiary_id))
+                        
+                        client_stats = cursor.fetchone()
+                        nodes[beneficiary_id] = {
+                            'id': beneficiary_id,
+                            'name': beneficiary_name or f"Клиент {beneficiary_id}",
+                            'type': 'beneficiary',
+                            'total_transactions': client_stats[0] if client_stats else 0,
+                            'total_volume': client_stats[1] if client_stats else 0,
+                            'risk_score': client_stats[2] if client_stats else 0,
+                            'size': min(50, max(10, (client_stats[1] or 0) / 10000000))
+                        }
+                    
+                    # Добавляем связь
+                    edge = {
+                        'source': sender_id,
+                        'target': beneficiary_id,
+                        'transaction_count': tx_count,
+                        'total_amount': total_amount,
+                        'avg_risk_score': avg_risk,
+                        'max_risk_score': max_risk,
+                        'is_suspicious': bool(suspicious_txs),
+                        'suspicious_transactions': suspicious_txs.split(',') if suspicious_txs else [],
+                        'weight': min(10, max(1, tx_count / 5))  # Толщина связи
+                    }
+                    edges.append(edge)
+                
+                # Вычисляем центральность узлов
+                node_connections = {}
+                for edge in edges:
+                    node_connections[edge['source']] = node_connections.get(edge['source'], 0) + 1
+                    node_connections[edge['target']] = node_connections.get(edge['target'], 0) + 1
+                
+                # Обновляем размеры узлов на основе центральности
+                for node_id, node in nodes.items():
+                    centrality = node_connections.get(node_id, 0)
+                    node['centrality'] = centrality
+                    node['size'] = min(60, max(15, centrality * 5 + node['size']))
+                    
+                    # Определяем цвет на основе риска
+                    risk = node['risk_score']
+                    if risk >= 7.0:
+                        node['color'] = '#ef4444'  # Красный - высокий риск
+                    elif risk >= 4.0:
+                        node['color'] = '#f59e0b'  # Оранжевый - средний риск
+                    elif risk >= 2.0:
+                        node['color'] = '#eab308'  # Желтый - низкий риск
+                    else:
+                        node['color'] = '#22c55e'  # Зеленый - минимальный риск
+                
+                return jsonify({
+                    'nodes': list(nodes.values()),
+                    'edges': edges,
+                    'statistics': {
+                        'total_nodes': len(nodes),
+                        'total_edges': len(edges),
+                        'high_risk_nodes': len([n for n in nodes.values() if n['risk_score'] >= 7.0]),
+                        'suspicious_connections': len([e for e in edges if e['is_suspicious']]),
+                        'total_volume': sum(e['total_amount'] for e in edges),
+                        'date_range': f"Последние {days_back} дней",
+                        'min_amount_filter': min_amount
+                    },
+                    'last_updated': datetime.now().isoformat()
+                })
+                
+        except Exception as e:
+            print(f"Ошибка при получении сетевых данных: {e}")
+            return jsonify({
+                'nodes': [],
+                'edges': [],
+                'statistics': {
+                    'total_nodes': 0,
+                    'total_edges': 0,
+                    'high_risk_nodes': 0,
+                    'suspicious_connections': 0,
+                    'total_volume': 0
+                },
+                'error': str(e),
+                'last_updated': datetime.now().isoformat()
+            })
+    
+    # Заглушка если нет БД
+    return jsonify({
+        'nodes': [],
+        'edges': [],
+        'statistics': {
+            'total_nodes': 0,
+            'total_edges': 0,
+            'high_risk_nodes': 0,
+            'suspicious_connections': 0,
+            'total_volume': 0
+        },
+        'last_updated': datetime.now().isoformat()
+    })
+
 @api_bp.route('/health', methods=['GET'])
 def health_check():
     """Проверка работоспособности сервера"""
@@ -365,6 +539,7 @@ def api_index():
             'processing_status': '/api/processing-status/<file_id>',
             'dashboard': '/api/analytics/dashboard',
             'risk_analysis': '/api/analytics/risk-analysis',
+            'network_graph': '/api/analytics/network-graph',
             'transactions': '/api/transactions',
             'transaction_details': '/api/transactions/<transaction_id>',
             'transaction_review': '/api/transactions/<transaction_id>/review',

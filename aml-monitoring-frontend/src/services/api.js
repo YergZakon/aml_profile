@@ -281,6 +281,23 @@ export const analyticsAPI = {
       throw error
     }
   },
+
+  // Получить данные сетевого графа
+  getNetworkGraph: async (params = {}) => {
+    try {
+      const response = await api.get('/api/analytics/network-graph', { 
+        params: {
+          limit: params.limit || 100,
+          min_amount: params.minAmount || 1000000,
+          days: params.days || 30
+        }
+      })
+      return response.data
+    } catch (error) {
+      console.error('Error getting network graph data:', error)
+      throw error
+    }
+  },
 }
 
 // API методы для отчетов

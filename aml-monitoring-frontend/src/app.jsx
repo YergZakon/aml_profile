@@ -9,6 +9,7 @@ import UploadPage from './pages/UploadPage'
 import Dashboard from './pages/DashboardPage'
 import TransactionsPage from './pages/TransactionsPage'
 import AnalysisPage from './pages/AnalysisPage'
+import NetworkPage from './pages/NetworkPage'
 import HistoryPage from './pages/HistoryPage'
 import SettingsPage from './pages/SettingsPage'
 import TransactionDetailsPage from './pages/TransactionDetailsPage'
@@ -46,6 +47,7 @@ function App() {
     { path: '/dashboard', label: 'Дашборд', icon: '📊' },
     { path: '/transactions', label: 'Транзакции', icon: '💳' },
     { path: '/analysis', label: 'Анализ рисков', icon: '⚠️' },
+    { path: '/network', label: 'Сетевой анализ', icon: '🕸️' },
     { path: '/history', label: 'История', icon: '📁' },
     { path: '/settings', label: 'Настройки', icon: '⚙️' },
   ]
@@ -122,6 +124,7 @@ function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/transactions" element={<TransactionsPage />} />
             <Route path="/analysis" element={<AnalysisPage />} />
+            <Route path="/network" element={<NetworkPage />} />
             <Route path="/transaction/:id" element={<TransactionDetailsPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/settings" element={<SettingsPage />} />
