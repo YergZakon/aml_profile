@@ -13,6 +13,8 @@ import NetworkPage from './pages/NetworkPage'
 import HistoryPage from './pages/HistoryPage'
 import SettingsPage from './pages/SettingsPage'
 import TransactionDetailsPage from './pages/TransactionDetailsPage'
+import ClientsPage from './pages/ClientsPage'
+import ClientDetailsPage from './pages/ClientDetailsPage'
 
 function App() {
   const [user, setUser] = useState(null)
@@ -45,6 +47,7 @@ function App() {
   const navLinks = [
     { path: '/upload', label: 'Загрузка файлов', icon: '📤' },
     { path: '/dashboard', label: 'Дашборд', icon: '📊' },
+    { path: '/clients', label: 'Клиенты', icon: '👥' },
     { path: '/transactions', label: 'Транзакции', icon: '💳' },
     { path: '/analysis', label: 'Анализ рисков', icon: '⚠️' },
     { path: '/network', label: 'Сетевой анализ', icon: '🕸️' },
@@ -122,6 +125,8 @@ function App() {
             <Route path="/" element={<Navigate to="/upload" replace />} />
             <Route path="/upload" element={<UploadPage />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/clients" element={<ClientsPage />} />
+            <Route path="/client/:id" element={<ClientDetailsPage />} />
             <Route path="/transactions" element={<TransactionsPage />} />
             <Route path="/analysis" element={<AnalysisPage />} />
             <Route path="/network" element={<NetworkPage />} />

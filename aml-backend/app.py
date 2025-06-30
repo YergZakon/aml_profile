@@ -699,28 +699,6 @@ def health_check():
         'version': '1.0.0'
     })
 
-@api_bp.route('/')
-def api_index():
-    """Главная страница API"""
-    return jsonify({
-        'service': 'АФМ РК - API системы мониторинга транзакций',
-        'version': '1.0.0',
-        'endpoints': {
-            'health': '/api/health',
-            'upload': '/upload',
-            'files': '/api/files',
-            'processing_status': '/api/processing-status/<file_id>',
-            'dashboard': '/api/analytics/dashboard',
-            'risk_analysis': '/api/analytics/risk-analysis',
-            'network_graph': '/api/analytics/network-graph',
-            'transactions': '/api/transactions',
-            'transaction_details': '/api/transactions/<transaction_id>',
-            'transaction_review': '/api/transactions/<transaction_id>/review',
-            'transactions_export': '/api/transactions/export'
-        },
-        'frontend_url': 'http://localhost:3000'
-    })
-
 # Генерация тестовых транзакций
 def generate_test_transactions(count=100):
     """Генерирует тестовые транзакции для демонстрации"""
@@ -1563,6 +1541,499 @@ def run_enhanced_analysis_on_existing_data() -> str:
     except Exception as e:
         print(f"❌ Ошибка анализа существующих данных: {e}")
         raise
+
+# === КЛИЕНТООРИЕНТИРОВАННЫЕ API ENDPOINTS ===
+
+@api_bp.route('/clients', methods=['GET'])
+def get_clients():
+    """Получить список всех клиентов с основной статистикой"""
+    try:
+        # Параметры пагинации
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 100))
+        offset = (page - 1) * limit
+        
+        # Используем путь к БД с сетевым анализом
+        db_path = './aml-backend/aml_system_with_network.db'
+        
+        if not os.path.exists(db_path):
+            # Если БД с сетевым анализом не найдена, используем последнюю доступную
+            db_path = latest_db_path
+            
+        if not os.path.exists(db_path):
+            return jsonify({'error': 'База данных не найдена'}), 404
+            
+        from aml_database_setup import AMLDatabaseManager
+        
+        with AMLDatabaseManager(db_path) as db:
+            cursor = db.connection.cursor()
+            
+            # Получаем уникальных клиентов с их статистикой
+            cursor.execute("""
+                WITH client_stats AS (
+                    SELECT 
+                        sender_id as client_id,
+                        sender_name as client_name,
+                        sender_country as country,
+                        COUNT(*) as total_transactions,
+                        SUM(amount_kzt) as total_amount,
+                        SUM(CASE WHEN is_suspicious = 1 THEN 1 ELSE 0 END) as suspicious_count,
+                        AVG(final_risk_score) as avg_risk_score,
+                        MAX(transaction_date) as last_transaction_date,
+                        'sender' as client_type
+                    FROM transactions 
+                    WHERE sender_id IS NOT NULL AND sender_name IS NOT NULL
+                    GROUP BY sender_id, sender_name, sender_country
+                    
+                    UNION ALL
+                    
+                    SELECT 
+                        beneficiary_id as client_id,
+                        beneficiary_name as client_name,
+                        beneficiary_country as country,
+                        COUNT(*) as total_transactions,
+                        SUM(amount_kzt) as total_amount,
+                        SUM(CASE WHEN is_suspicious = 1 THEN 1 ELSE 0 END) as suspicious_count,
+                        AVG(final_risk_score) as avg_risk_score,
+                        MAX(transaction_date) as last_transaction_date,
+                        'beneficiary' as client_type
+                    FROM transactions 
+                    WHERE beneficiary_id IS NOT NULL AND beneficiary_name IS NOT NULL
+                    GROUP BY beneficiary_id, beneficiary_name, beneficiary_country
+                )
+                SELECT 
+                    client_id,
+                    client_name,
+                    country,
+                    SUM(total_transactions) as total_transactions,
+                    SUM(total_amount) as total_amount,
+                    SUM(suspicious_count) as suspicious_count,
+                    AVG(avg_risk_score) as avg_risk_score,
+                    MAX(last_transaction_date) as last_transaction_date
+                FROM client_stats
+                GROUP BY client_id, client_name, country
+                ORDER BY total_amount DESC
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
+            
+            clients = []
+            for row in cursor.fetchall():
+                client = dict(row)
+                # Определяем уровень риска
+                risk_score = client['avg_risk_score'] or 0
+                if risk_score >= 7:
+                    risk_level = 'high'
+                elif risk_score >= 4:
+                    risk_level = 'medium'
+                else:
+                    risk_level = 'low'
+                    
+                client['risk_level'] = risk_level
+                client['total_amount'] = float(client['total_amount'] or 0)
+                client['avg_risk_score'] = round(float(client['avg_risk_score'] or 0), 2)
+                clients.append(client)
+            
+            # Получаем общее количество клиентов
+            cursor.execute("""
+                WITH client_stats AS (
+                    SELECT 
+                        sender_id as client_id,
+                        sender_name as client_name,
+                        sender_country as country
+                    FROM transactions 
+                    WHERE sender_id IS NOT NULL AND sender_name IS NOT NULL
+                    GROUP BY sender_id, sender_name, sender_country
+                    
+                    UNION
+                    
+                    SELECT 
+                        beneficiary_id as client_id,
+                        beneficiary_name as client_name,
+                        beneficiary_country as country
+                    FROM transactions 
+                    WHERE beneficiary_id IS NOT NULL AND beneficiary_name IS NOT NULL
+                    GROUP BY beneficiary_id, beneficiary_name, beneficiary_country
+                )
+                SELECT COUNT(DISTINCT client_id) as total
+                FROM client_stats
+            """)
+            
+            total_clients = cursor.fetchone()[0]
+        
+        return jsonify({
+            'clients': clients,
+            'pagination': {
+                'page': page,
+                'limit': limit,
+                'total': total_clients,
+                'pages': (total_clients + limit - 1) // limit
+            },
+            'total_count': len(clients),
+            'last_updated': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        print(f"❌ Ошибка при получении клиентов: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@api_bp.route('/clients/<client_id>', methods=['GET'])
+def get_client_details(client_id):
+    """Получить детальную информацию о клиенте"""
+    try:
+        db_path = './aml-backend/aml_system_with_network.db'
+        if not os.path.exists(db_path):
+            db_path = latest_db_path
+            
+        if not os.path.exists(db_path):
+            return jsonify({'error': 'База данных не найдена'}), 404
+            
+        from aml_database_setup import AMLDatabaseManager
+        
+        with AMLDatabaseManager(db_path) as db:
+            cursor = db.connection.cursor()
+            
+            # Получаем информацию о клиенте
+            cursor.execute("""
+                SELECT 
+                    COALESCE(sender_name, beneficiary_name) as name,
+                    COALESCE(sender_country, beneficiary_country) as country,
+                    COUNT(*) as total_transactions,
+                    SUM(amount_kzt) as total_amount,
+                    SUM(CASE WHEN is_suspicious = 1 THEN 1 ELSE 0 END) as suspicious_count,
+                    AVG(final_risk_score) as avg_risk_score,
+                    MIN(transaction_date) as first_transaction,
+                    MAX(transaction_date) as last_transaction
+                FROM transactions 
+                WHERE sender_id = ? OR beneficiary_id = ?
+            """, (client_id, client_id))
+            
+            client_info = dict(cursor.fetchone() or {})
+            
+            if not client_info.get('name'):
+                return jsonify({'error': 'Клиент не найден'}), 404
+            
+            # Получаем профиль клиента если существует (проверяем наличие таблицы)
+            try:
+                cursor.execute("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' AND name='customer_profiles'
+                """)
+                
+                if cursor.fetchone():
+                    cursor.execute("PRAGMA table_info(customer_profiles)")
+                    columns = [row[1] for row in cursor.fetchall()]
+                    
+                    # Строим запрос на основе доступных столбцов
+                    available_columns = []
+                    if 'risk_score' in columns:
+                        available_columns.append('risk_score')
+                    if 'risk_factors' in columns:
+                        available_columns.append('risk_factors')
+                    if 'profile_data' in columns:
+                        available_columns.append('profile_data')
+                    
+                    if available_columns:
+                        cursor.execute(f"""
+                            SELECT {', '.join(available_columns)}
+                            FROM customer_profiles 
+                            WHERE customer_id = ?
+                        """, (client_id,))
+                        profile_row = cursor.fetchone()
+                    else:
+                        profile_row = None
+                else:
+                    profile_row = None
+            except Exception:
+                profile_row = None
+            
+            profile_info = dict(profile_row) if profile_row else {}
+            
+            # Определяем уровень риска
+            risk_score = client_info.get('avg_risk_score', 0) or 0
+            if risk_score >= 7:
+                risk_level = 'high'
+            elif risk_score >= 4:
+                risk_level = 'medium'
+            else:
+                risk_level = 'low'
+            
+            client_details = {
+                'client_id': client_id,
+                'name': client_info['name'],
+                'country': client_info['country'],
+                'risk_level': risk_level,
+                'risk_score': round(float(risk_score), 2),
+                'total_transactions': client_info['total_transactions'],
+                'total_amount': float(client_info['total_amount'] or 0),
+                'suspicious_count': client_info['suspicious_count'],
+                'first_transaction': client_info['first_transaction'],
+                'last_transaction': client_info['last_transaction'],
+                'profile': profile_info
+            }
+        
+        return jsonify(client_details)
+        
+    except Exception as e:
+        print(f"❌ Ошибка при получении информации о клиенте: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@api_bp.route('/clients/<client_id>/transactions', methods=['GET'])
+def get_client_transactions(client_id):
+    """Получить историю транзакций клиента"""
+    try:
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 20))
+        offset = (page - 1) * limit
+        
+        db_path = './aml-backend/aml_system_with_network.db'
+        if not os.path.exists(db_path):
+            db_path = latest_db_path
+            
+        if not os.path.exists(db_path):
+            return jsonify({'error': 'База данных не найдена'}), 404
+            
+        from aml_database_setup import AMLDatabaseManager
+        
+        with AMLDatabaseManager(db_path) as db:
+            cursor = db.connection.cursor()
+            
+            # Получаем транзакции клиента
+            cursor.execute("""
+                SELECT 
+                    transaction_id,
+                    amount,
+                    amount_kzt,
+                    currency,
+                    transaction_date,
+                    sender_id,
+                    sender_name,
+                    beneficiary_id,
+                    beneficiary_name,
+                    sender_country,
+                    beneficiary_country,
+                    operation_type,
+                    purpose_text,
+                    final_risk_score,
+                    is_suspicious,
+                    risk_indicators,
+                    CASE 
+                        WHEN sender_id = ? THEN 'outgoing'
+                        WHEN beneficiary_id = ? THEN 'incoming'
+                        ELSE 'unknown'
+                    END as direction
+                FROM transactions 
+                WHERE sender_id = ? OR beneficiary_id = ?
+                ORDER BY transaction_date DESC
+                LIMIT ? OFFSET ?
+            """, (client_id, client_id, client_id, client_id, limit, offset))
+            
+            transactions = [dict(row) for row in cursor.fetchall()]
+            
+            # Получаем общее количество транзакций
+            cursor.execute("""
+                SELECT COUNT(*) as total
+                FROM transactions 
+                WHERE sender_id = ? OR beneficiary_id = ?
+            """, (client_id, client_id))
+            
+            total_count = cursor.fetchone()[0]
+            
+            # Форматируем данные транзакций
+            for tx in transactions:
+                tx['amount'] = float(tx['amount'] or 0)
+                tx['amount_kzt'] = float(tx['amount_kzt'] or 0)
+                tx['final_risk_score'] = float(tx['final_risk_score'] or 0)
+                
+                # Определяем уровень риска
+                risk_score = tx['final_risk_score']
+                if risk_score >= 7:
+                    tx['risk_level'] = 'high'
+                elif risk_score >= 4:
+                    tx['risk_level'] = 'medium'
+                else:
+                    tx['risk_level'] = 'low'
+        
+        return jsonify({
+            'transactions': transactions,
+            'pagination': {
+                'page': page,
+                'limit': limit,
+                'total': total_count,
+                'pages': (total_count + limit - 1) // limit
+            }
+        })
+        
+    except Exception as e:
+        print(f"❌ Ошибка при получении транзакций клиента: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@api_bp.route('/clients/<client_id>/connections', methods=['GET'])
+def get_client_connections(client_id):
+    """Получить сетевые связи клиента"""
+    try:
+        db_path = './aml-backend/aml_system_with_network.db'
+        if not os.path.exists(db_path):
+            db_path = latest_db_path
+            
+        if not os.path.exists(db_path):
+            return jsonify({'error': 'База данных не найдена'}), 404
+            
+        from aml_database_setup import AMLDatabaseManager
+        
+        with AMLDatabaseManager(db_path) as db:
+            cursor = db.connection.cursor()
+            
+            # Проверяем существование таблицы network_connections и её структуру
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='network_connections'
+            """)
+            
+            has_network_table = cursor.fetchone() is not None
+            
+            if has_network_table:
+                # Проверяем структуру таблицы
+                cursor.execute("PRAGMA table_info(network_connections)")
+                columns = [row[1] for row in cursor.fetchall()]
+                
+                # Проверяем наличие нужных столбцов
+                required_columns = ['node_id_1', 'node_id_2', 'connection_strength']
+                has_required_columns = all(col in columns for col in required_columns)
+                
+                if not has_required_columns:
+                    has_network_table = False
+            
+            if not has_network_table:
+                # Если таблицы нет или нет нужных столбцов, создаем связи на основе транзакций
+                return get_client_transaction_network(client_id, db)
+            
+            # Получаем сетевые связи из таблицы
+            cursor.execute("""
+                SELECT 
+                    node_id_2 as connected_client_id,
+                    connection_strength,
+                    transaction_count,
+                    total_amount,
+                    risk_score,
+                    connection_type
+                FROM network_connections 
+                WHERE node_id_1 = ?
+                ORDER BY connection_strength DESC
+                LIMIT 20
+            """, (client_id,))
+            
+            connections = [dict(row) for row in cursor.fetchall()]
+            
+            # Получаем информацию о связанных клиентах
+            for conn in connections:
+                connected_id = conn['connected_client_id']
+                cursor.execute("""
+                    SELECT 
+                        COALESCE(sender_name, beneficiary_name) as name,
+                        COALESCE(sender_country, beneficiary_country) as country
+                    FROM transactions 
+                    WHERE sender_id = ? OR beneficiary_id = ?
+                    LIMIT 1
+                """, (connected_id, connected_id))
+                
+                client_info = cursor.fetchone()
+                if client_info:
+                    conn['name'] = client_info['name']
+                    conn['country'] = client_info['country']
+                else:
+                    conn['name'] = f'Клиент {connected_id}'
+                    conn['country'] = 'Не определена'
+        
+        return jsonify({
+            'client_id': client_id,
+            'connections': connections,
+            'total_connections': len(connections)
+        })
+        
+    except Exception as e:
+        print(f"❌ Ошибка при получении связей клиента: {e}")
+        return jsonify({'error': str(e)}), 500
+
+def get_client_transaction_network(client_id, db):
+    """Создает сетевые связи на основе транзакций"""
+    cursor = db.connection.cursor()
+    
+    # Получаем связи через транзакции
+    cursor.execute("""
+        WITH client_connections AS (
+            SELECT 
+                CASE 
+                    WHEN sender_id = ? THEN beneficiary_id
+                    ELSE sender_id
+                END as connected_id,
+                CASE 
+                    WHEN sender_id = ? THEN beneficiary_name
+                    ELSE sender_name
+                END as connected_name,
+                CASE 
+                    WHEN sender_id = ? THEN beneficiary_country
+                    ELSE sender_country
+                END as connected_country,
+                COUNT(*) as transaction_count,
+                SUM(amount_kzt) as total_amount,
+                AVG(final_risk_score) as avg_risk_score
+            FROM transactions 
+            WHERE sender_id = ? OR beneficiary_id = ?
+            GROUP BY connected_id, connected_name, connected_country
+            HAVING connected_id IS NOT NULL AND connected_id != ?
+            ORDER BY transaction_count DESC, total_amount DESC
+            LIMIT 20
+        )
+        SELECT * FROM client_connections
+    """, (client_id, client_id, client_id, client_id, client_id, client_id))
+    
+    connections = []
+    for row in cursor.fetchall():
+        conn_data = dict(row)
+        connections.append({
+            'connected_client_id': conn_data['connected_id'],
+            'name': conn_data['connected_name'],
+            'country': conn_data['connected_country'],
+            'transaction_count': conn_data['transaction_count'],
+            'total_amount': float(conn_data['total_amount'] or 0),
+            'connection_strength': min(10, conn_data['transaction_count']),  # Нормализуем силу связи
+            'risk_score': round(float(conn_data['avg_risk_score'] or 0), 2),
+            'connection_type': 'transaction_based'
+        })
+    
+    return jsonify({
+        'client_id': client_id,
+        'connections': connections,
+        'total_connections': len(connections)
+    })
+
+# Обновляем список endpoints в главной странице API
+@api_bp.route('/')
+def api_index_updated():
+    """Главная страница API"""
+    return jsonify({
+        'service': 'АФМ РК - API системы мониторинга транзакций',
+        'version': '1.0.0',
+        'endpoints': {
+            'health': '/api/health',
+            'upload': '/upload',
+            'files': '/api/files',
+            'processing_status': '/api/processing-status/<file_id>',
+            'dashboard': '/api/analytics/dashboard',
+            'risk_analysis': '/api/analytics/risk-analysis',
+            'network_graph': '/api/analytics/network-graph',
+            'transactions': '/api/transactions',
+            'transaction_details': '/api/transactions/<transaction_id>',
+            'transaction_review': '/api/transactions/<transaction_id>/review',
+            'transactions_export': '/api/transactions/export',
+            # Новые клиентские endpoints
+            'clients': '/api/clients',
+            'client_details': '/api/clients/<client_id>',
+            'client_transactions': '/api/clients/<client_id>/transactions',
+            'client_connections': '/api/clients/<client_id>/connections'
+        },
+        'frontend_url': 'http://localhost:3000'
+    })
 
 # Регистрируем Blueprint
 app.register_blueprint(api_bp)
