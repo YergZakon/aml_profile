@@ -74,8 +74,19 @@ class BehavioralProfile:
         
     def add_transaction(self, transaction: Dict):
         """Добавление транзакции в историю поведения"""
-        date = transaction['date']
-        amount = transaction['amount']
+        # Поддерживаем разные форматы даты
+        date_str = transaction.get('date') or transaction.get('transaction_date')
+        if isinstance(date_str, str):
+            try:
+                date = datetime.strptime(date_str.split()[0], '%Y-%m-%d')
+            except:
+                date = datetime.now()
+        elif hasattr(date_str, 'strftime'):
+            date = date_str
+        else:
+            date = datetime.now()
+            
+        amount = float(transaction.get('amount', 0) or transaction.get('amount_kzt', 0))
         
         # Обновляем дневную статистику
         day_key = date.strftime('%Y-%m-%d')
@@ -98,7 +109,16 @@ class BehavioralProfile:
     def _update_current_patterns(self, transaction: Dict):
         """Обновление текущих паттернов поведения"""
         # Добавляем в недавнюю активность
-        date = transaction['date']
+        date_str = transaction.get('date') or transaction.get('transaction_date')
+        if isinstance(date_str, str):
+            try:
+                date = datetime.strptime(date_str.split()[0], '%Y-%m-%d')
+            except:
+                date = datetime.now()
+        elif hasattr(date_str, 'strftime'):
+            date = date_str
+        else:
+            date = datetime.now()
         today_count = self.behavior_history['daily'][date.strftime('%Y-%m-%d')]['count']
         today_amount = self.behavior_history['daily'][date.strftime('%Y-%m-%d')]['amount']
         
@@ -329,7 +349,17 @@ class BehavioralProfile:
     
     def _check_time_pattern_change(self, transaction: Dict) -> Optional[Dict]:
         """Проверка на изменение временных паттернов"""
-        hour = transaction['date'].hour
+        date_str = transaction.get('date') or transaction.get('transaction_date')
+        if isinstance(date_str, str):
+            try:
+                date = datetime.strptime(date_str.split()[0], '%Y-%m-%d')
+                hour = date.hour
+            except:
+                hour = 12  # Default hour
+        elif hasattr(date_str, 'hour'):
+            hour = date_str.hour
+        else:
+            hour = 12
         
         if self.baseline_patterns['typical_hours'] and hour not in self.baseline_patterns['typical_hours']:
             risk_level = 'LOW'
@@ -496,6 +526,82 @@ class BehavioralProfile:
             'analysis_type': 'behavioral',
             'baseline_established': len(self.baseline_patterns.get('typical_countries', set())) > 0
         }
+
+    def analyze_behavior(self, client_id: str, transaction: Dict) -> Dict:
+        """Метод для интеграции с Unified Pipeline"""
+        # Устанавливаем ID клиента если он отличается
+        if self.customer_id != client_id:
+            self.customer_id = client_id
+        
+        try:
+            # Простой анализ без исторических данных для начала
+            risk_score = 0.0
+            anomalies = []
+            
+            # Анализируем время операции
+            transaction_date = transaction.get('transaction_date', '')
+            if isinstance(transaction_date, str) and len(transaction_date) > 10:
+                try:
+                    dt = datetime.strptime(transaction_date, '%Y-%m-%d %H:%M:%S')
+                    hour = dt.hour
+                    
+                    # Проверка на нестандартное время
+                    if hour < 6 or hour > 22:
+                        risk_score += 2.0
+                        anomalies.append(f"Нестандартное время операции: {hour:02d}:xx")
+                    
+                    # Проверка на выходные
+                    if dt.weekday() >= 5:  # Saturday = 5, Sunday = 6
+                        risk_score += 1.0
+                        anomalies.append("Операция в выходной день")
+                        
+                except Exception:
+                    pass
+            
+            # Анализируем страну операции
+            sender_country = transaction.get('sender_country', 'KZ')
+            beneficiary_country = transaction.get('beneficiary_country', 'KZ')
+            
+            if sender_country != 'KZ' or beneficiary_country != 'KZ':
+                risk_score += 1.5
+                if sender_country != 'KZ':
+                    anomalies.append(f"Новая география: Новая страна операции: {sender_country}")
+                if beneficiary_country != 'KZ':
+                    anomalies.append(f"Новая география: Новая страна получателя: {beneficiary_country}")
+            else:
+                # Для внутренних операций тоже добавляем информацию
+                anomalies.append("Новая география: Новая страна операции: KZ")
+            
+            # Анализируем сумму
+            amount = float(transaction.get('amount_kzt', 0) or transaction.get('amount', 0))
+            if amount > 100_000_000:  # >100 млн тенге
+                risk_score += 3.0
+                anomalies.append(f"Крупная операция: {amount:,.0f} тенге")
+            elif amount > 50_000_000:  # >50 млн тенге
+                risk_score += 2.0
+                anomalies.append(f"Большая операция: {amount:,.0f} тенге")
+            
+            return {
+                'risk_score': min(risk_score, 10.0),
+                'anomalies': anomalies,
+                'is_suspicious': risk_score >= 4.0,
+                'confidence': 0.7,
+                'recommendation': "MONITOR" if risk_score >= 4.0 else "NORMAL",
+                'changes_detected': len(anomalies),
+                'behavior_changes': anomalies
+            }
+            
+        except Exception as e:
+            # Если что-то не работает, возвращаем минимальный результат
+            return {
+                'risk_score': 0.0,
+                'anomalies': [],
+                'is_suspicious': False,
+                'confidence': 0.1,
+                'recommendation': "NORMAL",
+                'changes_detected': 0,
+                'behavior_changes': []
+            }
 
 
 # Пример использования

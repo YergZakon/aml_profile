@@ -821,6 +821,98 @@ ID сети: {self.network_id}
         # Простая эвристика: если ID содержит только цифры и длина 12 - это ИИН физлица
         return participant_id.isdigit() and len(participant_id) == 12
 
+    def analyze_network_patterns(self, transaction: Dict) -> Dict:
+        """
+        Анализ сетевых паттернов для интеграции с Unified Pipeline
+        Ожидается unified_aml_pipeline.py
+        """
+        try:
+            # Добавляем транзакцию в сеть
+            sender = transaction.get('sender_id') or transaction.get('debtor_account')
+            beneficiary = transaction.get('beneficiary_id') or transaction.get('creditor_account')
+            amount = float(transaction.get('amount', 0) or transaction.get('amount_kzt', 0))
+            
+            if not sender or not beneficiary:
+                return {
+                    'risk_score': 0.0,
+                    'network_flags': [],
+                    'detected_schemes': [],
+                    'participants_at_risk': 0
+                }
+            
+            # Добавляем транзакцию во временную сеть для анализа
+            transaction_date = transaction.get('transaction_date')
+            if isinstance(transaction_date, str):
+                try:
+                    date = datetime.strptime(transaction_date.split()[0], '%Y-%m-%d')
+                except:
+                    date = datetime.now()
+            else:
+                date = datetime.now()
+                
+            self.add_transaction(
+                sender=sender,
+                beneficiary=beneficiary, 
+                amount=amount,
+                date=date,
+                transaction_id=transaction.get('transaction_id', 'unknown')
+            )
+            
+            # Обнаруживаем схемы отмывания денег
+            schemes = self.detect_money_laundering_schemes()
+            
+            # Получаем риск-скоры участников
+            sender_risk = self.get_participant_risk_score(sender)
+            beneficiary_risk = self.get_participant_risk_score(beneficiary)
+            
+            # Формируем флаги на основе обнаруженных схем
+            network_flags = []
+            max_risk_score = 0.0
+            
+            for scheme in schemes:
+                scheme_type = scheme.get('type', 'unknown')
+                scheme_risk = scheme.get('risk_score', 0.0)
+                max_risk_score = max(max_risk_score, scheme_risk)
+                
+                if scheme_type == 'circular':
+                    network_flags.append('СХЕМА: Круговые переводы')
+                elif scheme_type == 'star':
+                    network_flags.append('СХЕМА: Звездообразная структура')
+                elif scheme_type == 'smurfing':
+                    network_flags.append('СХЕМА: Дробление средств (смурфинг)')
+                elif scheme_type == 'transit':
+                    network_flags.append('СХЕМА: Транзитные операции')
+            
+            # Проверяем риски участников
+            if sender_risk > 7.0:
+                network_flags.append('СЕТЬ: Высокорисковый отправитель')
+            if beneficiary_risk > 7.0:
+                network_flags.append('СЕТЬ: Высокорисковый получатель')
+            
+            # Итоговый риск-скор сети
+            participant_risk = max(sender_risk, beneficiary_risk)
+            final_risk_score = max(max_risk_score, participant_risk / 10.0)  # Нормализуем к 0-1
+            
+            return {
+                'risk_score': final_risk_score,
+                'network_flags': network_flags,
+                'detected_schemes': schemes,
+                'participants_at_risk': len([p for p in [sender, beneficiary] 
+                                           if self.get_participant_risk_score(p) > 5.0]),
+                'sender_risk': sender_risk,
+                'beneficiary_risk': beneficiary_risk,
+                'scheme_count': len(schemes)
+            }
+            
+        except Exception as e:
+            # В случае ошибки возвращаем безопасные значения
+            return {
+                'risk_score': 0.0,
+                'network_flags': [f'ОШИБКА: {str(e)}'],
+                'detected_schemes': [],
+                'participants_at_risk': 0
+            }
+
 
 # Пример использования
 if __name__ == "__main__":

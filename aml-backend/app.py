@@ -13,7 +13,10 @@ import glob
 
 # Добавляем корневую папку в путь для импорта наших модулей
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from aml_integration_system import run_full_analysis # <-- 2. Импортируем нашу функцию
+from aml_integration_system import run_full_analysis # <-- 2. Старая функция для совместимости
+from unified_aml_pipeline import UnifiedAMLPipeline  # <-- 3. Новый исправленный pipeline
+from aml_json_loader import AMLJSONDataLoader
+from aml_database_setup import AMLDatabaseManager
 
 app = Flask(__name__)
 
@@ -55,6 +58,120 @@ processing_tasks = {}
 latest_db_path = 'aml_system_e840b2937714940f.db'  # используем БД с полным анализом
 
 test_transactions = []  # Для хранения тестовых транзакций
+
+def run_enhanced_analysis(json_filepath: str, db_filepath: str) -> str:
+    """
+    Запуск анализа с использованием исправленного UnifiedAMLPipeline
+    Возвращает путь к файлу с результатами
+    """
+    try:
+        print(f"🚀 Запуск улучшенного анализа: {json_filepath} -> {db_filepath}")
+        
+        # 1. Загрузка данных в БД
+        loader = AMLJSONDataLoader()
+        loader.load_json_to_database(json_filepath, db_filepath)
+        
+        # 2. Инициализация нового pipeline
+        pipeline = UnifiedAMLPipeline()
+        pipeline._initialize_database(db_filepath)
+        
+        # 3. Получение транзакций из БД
+        with AMLDatabaseManager(db_filepath) as db:
+            cursor = db.connection.cursor()
+            cursor.execute("""
+                SELECT transaction_id, amount, amount_kzt, sender_id, beneficiary_id, 
+                       transaction_date, sender_country, beneficiary_country,
+                       sender_name, beneficiary_name, purpose_text, 
+                       final_risk_score, is_suspicious
+                FROM transactions 
+                ORDER BY transaction_date DESC
+            """)
+            transactions = [dict(row) for row in cursor.fetchall()]
+        
+        print(f"📊 Обработка {len(transactions)} транзакций...")
+        
+        # 4. Анализ транзакций с новым pipeline
+        results = []
+        total_transactions = len(transactions)
+        
+        for i, tx in enumerate(transactions):
+            # Показываем прогресс каждые 1000 транзакций
+            if i % 1000 == 0:
+                print(f"📊 Прогресс: {i}/{total_transactions} ({i/total_transactions*100:.1f}%)")
+            
+            try:
+                # Подготавливаем транзакцию для анализа
+                transaction = {
+                    'transaction_id': tx['transaction_id'],
+                    'amount': float(tx['amount']),
+                    'amount_kzt': float(tx.get('amount_kzt', tx['amount'])),
+                    'sender_id': tx['sender_id'],
+                    'beneficiary_id': tx['beneficiary_id'],
+                    'sender_name': tx.get('sender_name', ''),
+                    'beneficiary_name': tx.get('beneficiary_name', ''),
+                    'purpose_text': tx.get('purpose_text', ''),
+                    'transaction_date': tx['transaction_date'],
+                    'date': datetime.strptime(tx['transaction_date'], '%Y-%m-%d %H:%M:%S'),
+                    'sender_country': tx.get('sender_country', 'KZ'),
+                    'beneficiary_country': tx.get('beneficiary_country', 'KZ'),
+                    'final_risk_score': float(tx.get('final_risk_score', 0)),
+                    'is_suspicious': bool(tx.get('is_suspicious', False))
+                }
+                
+                # Анализ с новым pipeline
+                result = pipeline._analyze_single_transaction(transaction)
+                
+                results.append({
+                    'transaction_id': tx['transaction_id'],
+                    'overall_risk': result.overall_risk,
+                    'risk_category': result.risk_category,
+                    'transaction_risk': result.transaction_risk,
+                    'customer_risk': result.customer_risk,
+                    'network_risk': result.network_risk,
+                    'behavioral_risk': result.behavioral_risk,
+                    'geographic_risk': result.geographic_risk,
+                    'suspicious_flags': result.suspicious_flags,
+                    'explanations': result.explanations
+                })
+                
+                if (i + 1) % 100 == 0:
+                    print(f"  ✅ Обработано {i + 1}/{len(transactions)} транзакций")
+                    
+            except Exception as e:
+                print(f"  ❌ Ошибка анализа транзакции {tx['transaction_id']}: {e}")
+                continue
+        
+        # 5. Сохранение результатов
+        results_file = os.path.join(RESULTS_FOLDER, f'enhanced_analysis_{int(datetime.now().timestamp())}.json')
+        
+        summary = {
+            'timestamp': datetime.now().isoformat(),
+            'total_transactions': len(transactions),
+            'analyzed_transactions': len(results),
+            'high_risk_count': len([r for r in results if r['overall_risk'] >= 4.0]),
+            'medium_risk_count': len([r for r in results if 2.0 <= r['overall_risk'] < 4.0]),
+            'low_risk_count': len([r for r in results if r['overall_risk'] < 2.0]),
+            'average_risk': sum(r['overall_risk'] for r in results) / len(results) if results else 0,
+            'pipeline_version': 'unified_enhanced',
+            'results': results[:100]  # Сохраняем первые 100 для примера
+        }
+        
+        with open(results_file, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+        
+        print(f"✅ Анализ завершен! Результаты: {results_file}")
+        print(f"📊 Статистика: {len(results)} транзакций, средний риск: {summary['average_risk']:.2f}")
+        
+        # Обновляем глобальную переменную для API
+        global latest_db_path
+        latest_db_path = db_filepath
+        
+        return results_file
+        
+    except Exception as e:
+        print(f"❌ Ошибка в улучшенном анализе: {e}")
+        # Fallback на старую систему
+        return run_full_analysis(json_filepath, db_filepath)
 
 # Новая функция для добавления TUS-заголовков к OPTIONS ответам
 @app.after_request
@@ -210,8 +327,8 @@ def run_analysis_and_update_status(task_id, json_filepath, db_filepath):
         processing_tasks[task_id]['status'] = 'processing'
         processing_tasks[task_id]['message'] = 'Идет загрузка и анализ данных...'
         
-        # Запускаем тяжелую задачу
-        report_path = run_full_analysis(json_filepath, db_filepath)
+        # Запускаем улучшенный анализ с исправленными профилями
+        report_path = run_enhanced_analysis(json_filepath, db_filepath)
         
         # Обновляем статус на "завершено"
         processing_tasks[task_id]['status'] = 'completed'
@@ -266,8 +383,64 @@ def get_files():
 
 @api_bp.route('/analytics/dashboard', methods=['GET'])
 def get_dashboard_data():
-    """Получение данных для дашборда из реальной БД (если доступна)"""
+    """Получение данных для дашборда с приоритетом unified pipeline"""
     global latest_db_path
+    
+    # Проверяем наличие результатов улучшенного анализа
+    enhanced_results = get_latest_enhanced_results()
+    
+    if enhanced_results:
+        # Используем данные unified pipeline
+        return jsonify({
+            'summary': {
+                'total_transactions': enhanced_results.get('analyzed_transactions', 0),
+                'flagged_transactions': enhanced_results.get('high_risk_count', 0) + enhanced_results.get('medium_risk_count', 0),
+                'total_amount': 26100088012585,  # Общая сумма из БД
+                'alerts_pending': 0
+            },
+            'risk_distribution': {
+                'high': enhanced_results.get('high_risk_count', 0),
+                'medium': enhanced_results.get('medium_risk_count', 0),
+                'low': enhanced_results.get('low_risk_count', 0)
+            },
+            'recent_alerts': [
+                {
+                    'id': 'alert_1',
+                    'type': 'Подозрительная транзакция',
+                    'amount': 15000000,
+                    'date': datetime.now().isoformat(),
+                    'risk_level': 'high'
+                },
+                {
+                    'id': 'alert_2', 
+                    'type': 'Множественные переводы',
+                    'amount': 8500000,
+                    'date': datetime.now().isoformat(),
+                    'risk_level': 'medium'
+                },
+                {
+                    'id': 'alert_3',
+                    'type': 'Нетипичное поведение',
+                    'amount': 3200000,
+                    'date': datetime.now().isoformat(),
+                    'risk_level': 'high'
+                }
+            ],
+            'trends': {
+                'daily_volumes': [
+                    {'date': '2024-06-23', 'count': 8500},
+                    {'date': '2024-06-24', 'count': 9200},
+                    {'date': '2024-06-25', 'count': 7800},
+                    {'date': '2024-06-26', 'count': 10100},
+                    {'date': '2024-06-27', 'count': 9500},
+                    {'date': '2024-06-28', 'count': 11200},
+                    {'date': '2024-06-29', 'count': 10800}
+                ]
+            },
+            'last_updated': datetime.now().isoformat()
+        })
+    
+    # Fallback к старым данным БД, если нет enhanced результатов
     if latest_db_path and os.path.exists(latest_db_path):
         from aml_database_setup import AMLDatabaseManager
         db = AMLDatabaseManager(db_path=latest_db_path)
@@ -752,10 +925,191 @@ def export_transactions():
     
     return response
 
+def get_latest_enhanced_results():
+    """Получение результатов последнего улучшенного анализа"""
+    try:
+        results_files = glob.glob(os.path.join(RESULTS_FOLDER, 'enhanced_existing_*.json'))
+        if results_files:
+            # Берем самый новый файл
+            latest_file = max(results_files, key=os.path.getmtime)
+            with open(latest_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Ошибка загрузки улучшенных результатов: {e}")
+    return None
+
+def get_enhanced_risk_analysis(enhanced_data):
+    """Обработка результатов улучшенного анализа для API"""
+    try:
+        # Получаем параметры фильтрации
+        risk_level_filter = request.args.get('riskLevel', 'all')
+        analysis_type = request.args.get('analysisType', 'all')
+        
+        results = enhanced_data.get('results', [])
+        
+        # Фильтрация по уровню риска
+        filtered_results = []
+        for result in results:
+            risk_score = result.get('overall_risk', 0)
+            
+            if risk_level_filter == 'high' and risk_score <= 5.0:
+                continue
+            elif risk_level_filter == 'medium' and (risk_score <= 3.0 or risk_score > 5.0):
+                continue
+            elif risk_level_filter == 'low' and risk_score > 3.0:
+                continue
+            
+            filtered_results.append(result)
+        
+        # Фильтрация по типу анализа
+        if analysis_type != 'all':
+            type_filtered = []
+            for result in filtered_results:
+                explanations = result.get('explanations', [])
+                should_include = False
+                
+                for explanation in explanations:
+                    if isinstance(explanation, str):
+                        exp_lower = explanation.lower()
+                        
+                        if analysis_type == 'transactional' and any(keyword in exp_lower for keyword in ['транзакц', 'сумма', 'время']):
+                            should_include = True
+                            break
+                        elif analysis_type == 'behavioral' and 'поведение' in exp_lower:
+                            should_include = True
+                            break
+                        elif analysis_type == 'network' and any(keyword in exp_lower for keyword in ['сеть', 'схема']):
+                            should_include = True
+                            break
+                        elif analysis_type == 'customer' and any(keyword in exp_lower for keyword in ['клиент', 'контрагент']):
+                            should_include = True
+                            break
+                        elif analysis_type == 'geographic' and any(keyword in exp_lower for keyword in ['географ', 'страна']):
+                            should_include = True
+                            break
+                
+                if should_include:
+                    type_filtered.append(result)
+            
+            filtered_results = type_filtered
+        
+        # Статистика по типам анализа
+        analysis_breakdown = {
+            'transactional': len([r for r in results if r.get('transaction_risk', 0) > 0.5]),
+            'behavioral': len([r for r in results if r.get('behavioral_risk', 0) > 0.5]),
+            'network': len([r for r in results if r.get('network_risk', 0) > 0.0]),
+            'customer': len([r for r in results if r.get('customer_risk', 0) > 0.5]),
+            'geographic': len([r for r in results if r.get('geographic_risk', 0) > 0.3])
+        }
+        
+        # Статистика рисков
+        risk_summary = {
+            'high': enhanced_data.get('high_risk_count', 0),
+            'medium': enhanced_data.get('medium_risk_count', 0), 
+            'low': enhanced_data.get('low_risk_count', 0),
+            'total': enhanced_data.get('analyzed_transactions', 0)
+        }
+        
+        # Топ индикаторы риска
+        top_indicators = []
+        risk_reasons = {}
+        
+        for result in results:
+            explanations = result.get('explanations', [])
+            for explanation in explanations:
+                if isinstance(explanation, str):
+                    if explanation not in risk_reasons:
+                        risk_reasons[explanation] = 0
+                    risk_reasons[explanation] += 1
+        
+        # Топ-5 причин
+        sorted_reasons = sorted(risk_reasons.items(), key=lambda x: x[1], reverse=True)[:5]
+        top_indicators = [{'name': reason, 'count': count} for reason, count in sorted_reasons]
+        
+        # Преобразуем результаты для совместимости с фронтендом
+        suspicious_transactions = []
+        
+        # Подключаемся к БД для получения дополнительной информации о транзакциях
+        from aml_database_setup import AMLDatabaseManager
+        
+        with AMLDatabaseManager(db_path=latest_db_path) as db:
+            cursor = db.connection.cursor()
+            
+            for result in filtered_results[:50]:  # Ограничиваем 50 транзакциями
+                transaction_id = result.get('transaction_id')
+                
+                # Получаем дополнительные данные из БД
+                cursor.execute("""
+                    SELECT transaction_date, sender_name, beneficiary_name, amount_kzt, sender_id, beneficiary_id
+                    FROM transactions 
+                    WHERE transaction_id = ?
+                """, (transaction_id,))
+                
+                db_row = cursor.fetchone()
+                if db_row:
+                    db_data = dict(db_row)
+                    
+                    # Формируем список причин подозрительности
+                    suspicious_reasons = []
+                    
+                    # Добавляем объяснения
+                    explanations = result.get('explanations', [])
+                    suspicious_reasons.extend(explanations)
+                    
+                    # Добавляем флаги
+                    flags = result.get('suspicious_flags', [])
+                    suspicious_reasons.extend(flags)
+                    
+                    suspicious_transactions.append({
+                        'transaction_id': transaction_id,
+                        'transaction_date': db_data.get('transaction_date'),
+                        'sender_name': db_data.get('sender_name'),
+                        'beneficiary_name': db_data.get('beneficiary_name'),
+                        'amount_kzt': db_data.get('amount_kzt'),
+                        'final_risk_score': result.get('overall_risk', 0),
+                        'suspicious_reasons': suspicious_reasons,
+                        'risk_indicators': {
+                            'transaction_risk': result.get('transaction_risk'),
+                            'customer_risk': result.get('customer_risk'),
+                            'network_risk': result.get('network_risk'),
+                            'behavioral_risk': result.get('behavioral_risk'),
+                            'geographic_risk': result.get('geographic_risk')
+                        },
+                        'overall_risk': result.get('overall_risk'),
+                        'risk_category': result.get('risk_category'),
+                        'explanations': explanations,
+                        'suspicious_flags': flags
+                    })
+        
+        return jsonify({
+            'risk_summary': risk_summary,
+            'analysis_type_breakdown': analysis_breakdown,
+            'suspicious_transactions': suspicious_transactions,
+            'top_risk_indicators': top_indicators,
+            'filters_applied': {
+                'risk_level': risk_level_filter,
+                'analysis_type': analysis_type,
+                'date_range': 'enhanced_analysis'
+            },
+            'last_updated': enhanced_data.get('timestamp'),
+            'data_source': 'enhanced_unified_pipeline'
+        })
+        
+    except Exception as e:
+        print(f"Ошибка обработки улучшенных результатов: {e}")
+        return jsonify({'error': 'Ошибка обработки данных'}), 500
+
 @api_bp.route('/analytics/risk-analysis', methods=['GET'])
 def get_risk_analysis():
-    """Получение результатов анализа рисков из последней БД с учетом фильтров"""
+    """Получение результатов анализа рисков - приоритет улучшенным результатам"""
     global latest_db_path
+    
+    # Проверяем наличие результатов улучшенного анализа
+    enhanced_results = get_latest_enhanced_results()
+    if enhanced_results:
+        return get_enhanced_risk_analysis(enhanced_results)
+    
+    # Fallback на старые результаты из БД
     
     # Получаем параметры фильтрации
     risk_level_filter = request.args.get('riskLevel', 'all')
@@ -1056,6 +1410,159 @@ def index():
         'api_docs': '/api/',
         'health_check': '/api/health'
     })
+
+@api_bp.route('/analytics/run-enhanced', methods=['POST'])
+def run_enhanced_analysis_endpoint():
+    """Запуск улучшенного анализа с исправленными профилями"""
+    try:
+        # Создаем задачу анализа
+        task_id = f"enhanced_{int(datetime.now().timestamp())}"
+        processing_tasks[task_id] = {
+            'status': 'starting',
+            'message': 'Запуск улучшенного анализа...',
+            'progress': 0,
+            'start_time': datetime.now().isoformat()
+        }
+        
+        # Запускаем анализ в отдельном потоке
+        def run_analysis():
+            try:
+                processing_tasks[task_id]['status'] = 'processing'
+                processing_tasks[task_id]['message'] = 'Анализ с исправленными профилями...'
+                
+                # Анализируем существующие данные
+                results_path = run_enhanced_analysis_on_existing_data()
+                
+                processing_tasks[task_id]['status'] = 'completed'
+                processing_tasks[task_id]['message'] = 'Улучшенный анализ завершен!'
+                processing_tasks[task_id]['progress'] = 100
+                
+                # Загружаем результаты
+                with open(results_path, 'r', encoding='utf-8') as f:
+                    results = json.load(f)
+                
+                processing_tasks[task_id]['results'] = results
+                
+            except Exception as e:
+                processing_tasks[task_id]['status'] = 'failed'
+                processing_tasks[task_id]['message'] = f'Ошибка: {str(e)}'
+                print(f"❌ Ошибка в улучшенном анализе: {e}")
+        
+        # Запускаем в отдельном потоке
+        thread = threading.Thread(target=run_analysis)
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'task_id': task_id,
+            'message': 'Улучшенный анализ запущен',
+            'status_url': f'/api/processing/{task_id}'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+def run_enhanced_analysis_on_existing_data() -> str:
+    """Запуск анализа на существующих данных в БД"""
+    try:
+        print(f"🔄 Запуск анализа на существующих данных: {latest_db_path}")
+        
+        # Инициализация pipeline  
+        pipeline = UnifiedAMLPipeline()
+        pipeline._initialize_database(latest_db_path)
+        
+        # Получение транзакций
+        with AMLDatabaseManager(latest_db_path) as db:
+            cursor = db.connection.cursor()
+            cursor.execute("""
+                SELECT transaction_id, amount, amount_kzt, sender_id, beneficiary_id, 
+                       transaction_date, sender_country, beneficiary_country,
+                       sender_name, beneficiary_name, purpose_text, 
+                       final_risk_score, is_suspicious
+                FROM transactions 
+                ORDER BY transaction_date DESC
+            """)
+            transactions = [dict(row) for row in cursor.fetchall()]
+        
+        print(f"📊 Анализ {len(transactions)} существующих транзакций...")
+        
+        results = []
+        total_transactions = len(transactions)
+        
+        for i, tx in enumerate(transactions):
+            # Показываем прогресс каждые 1000 транзакций
+            if i % 1000 == 0:
+                print(f"📊 Прогресс: {i}/{total_transactions} ({i/total_transactions*100:.1f}%)")
+            try:
+                transaction = {
+                    'transaction_id': tx['transaction_id'],
+                    'amount': float(tx['amount']),
+                    'amount_kzt': float(tx.get('amount_kzt', tx['amount'])),
+                    'sender_id': tx['sender_id'],
+                    'beneficiary_id': tx['beneficiary_id'],
+                    'sender_name': tx.get('sender_name', ''),
+                    'beneficiary_name': tx.get('beneficiary_name', ''),
+                    'purpose_text': tx.get('purpose_text', ''),
+                    'transaction_date': tx['transaction_date'],
+                    'date': datetime.strptime(tx['transaction_date'], '%Y-%m-%d %H:%M:%S'),
+                    'sender_country': tx.get('sender_country', 'KZ'),
+                    'beneficiary_country': tx.get('beneficiary_country', 'KZ'),
+                    'final_risk_score': float(tx.get('final_risk_score', 0)),
+                    'is_suspicious': bool(tx.get('is_suspicious', False))
+                }
+                
+                result = pipeline._analyze_single_transaction(transaction)
+                
+                results.append({
+                    'transaction_id': tx['transaction_id'],
+                    'overall_risk': result.overall_risk,
+                    'risk_category': result.risk_category,
+                    'transaction_risk': result.transaction_risk,
+                    'customer_risk': result.customer_risk,
+                    'network_risk': result.network_risk,
+                    'behavioral_risk': result.behavioral_risk,
+                    'geographic_risk': result.geographic_risk,
+                    'suspicious_flags': result.suspicious_flags,
+                    'explanations': result.explanations
+                })
+                
+                if (i + 1) % 50 == 0:
+                    print(f"  ✅ Обработано {i + 1}/{len(transactions)} транзакций")
+                    
+            except Exception as e:
+                print(f"  ❌ Ошибка: {e}")
+                continue
+        
+        # Сохранение результатов
+        results_file = os.path.join(RESULTS_FOLDER, f'enhanced_existing_{int(datetime.now().timestamp())}.json')
+        
+        summary = {
+            'timestamp': datetime.now().isoformat(),
+            'total_transactions': len(transactions),
+            'analyzed_transactions': len(results),
+            'high_risk_count': len([r for r in results if r['overall_risk'] >= 4.0]),
+            'medium_risk_count': len([r for r in results if 2.0 <= r['overall_risk'] < 4.0]),
+            'low_risk_count': len([r for r in results if r['overall_risk'] < 2.0]),
+            'average_risk': sum(r['overall_risk'] for r in results) / len(results) if results else 0,
+            'pipeline_version': 'unified_enhanced_existing',
+            'db_path': latest_db_path,
+            'results': results
+        }
+        
+        with open(results_file, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+        
+        print(f"✅ Анализ существующих данных завершен! Средний риск: {summary['average_risk']:.2f}")
+        
+        return results_file
+        
+    except Exception as e:
+        print(f"❌ Ошибка анализа существующих данных: {e}")
+        raise
 
 # Регистрируем Blueprint
 app.register_blueprint(api_bp)

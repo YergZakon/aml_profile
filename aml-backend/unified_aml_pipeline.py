@@ -27,6 +27,7 @@ from behavioral_profile_afm import BehavioralProfile
 from geographic_profile_afm import GeographicProfile
 from aml_database_setup import AMLDatabaseManager
 from aml_json_loader import AMLJSONDataLoader
+from afm_risk_engine import AFMRiskEngine, AFMRiskResult
 
 # Настройка логирования
 logging.basicConfig(
@@ -242,14 +243,14 @@ class UnifiedRiskCalculator:
         return overall_risk, category
     
     def _determine_category(self, risk_score: float) -> str:
-        """Определяет категорию риска"""
-        if risk_score >= 8.0:
+        """Определяет категорию риска (адаптировано под старую систему)"""
+        if risk_score >= 7.0:
             return "КРИТИЧЕСКИЙ"
-        elif risk_score >= 6.0:
-            return "ВЫСОКИЙ"
         elif risk_score >= 4.0:
-            return "СРЕДНИЙ"
+            return "ВЫСОКИЙ"
         elif risk_score >= 2.0:
+            return "СРЕДНИЙ"
+        elif risk_score >= 1.0:
             return "НИЗКИЙ"
         else:
             return "МИНИМАЛЬНЫЙ"
@@ -263,6 +264,7 @@ class UnifiedAMLPipeline:
         self.json_loader = None  # Будет инициализирован в _initialize_database
         self.risk_calculator = UnifiedRiskCalculator(self.config)
         self.explanation_engine = ExplanationEngine()
+        self.afm_risk_engine = None  # Будет инициализирован в _initialize_database
         
         # Инициализируем анализаторы
         self.analyzers = {}
@@ -284,7 +286,7 @@ class UnifiedAMLPipeline:
                 'transaction': TransactionProfile(),
                 'customer': CustomerProfile(),
                 'network': NetworkProfile(), 
-                'geographic': GeographicProfile()
+                'geographic': GeographicProfile(self.db_manager)
             }
             # BehavioralProfile будет создан для каждого клиента индивидуально
             logger.info("✅ Все анализаторы успешно инициализированы")
@@ -297,7 +299,8 @@ class UnifiedAMLPipeline:
         try:
             self.db_manager = AMLDatabaseManager(db_path=db_path)
             self.json_loader = AMLJSONDataLoader(self.db_manager)
-            logger.info(f"✅ База данных инициализирована: {db_path}")
+            self.afm_risk_engine = AFMRiskEngine(self.db_manager)
+            logger.info(f"✅ База данных и AFM Risk Engine инициализированы: {db_path}")
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации БД: {e}")
             raise
@@ -407,6 +410,19 @@ class UnifiedAMLPipeline:
         
         return results
     
+    def _determine_category(self, risk_score: float) -> str:
+        """Определяет категорию риска (адаптировано под AFM систему)"""
+        if risk_score >= 8.0:
+            return "КРИТИЧЕСКИЙ"
+        elif risk_score >= 4.0:
+            return "ВЫСОКИЙ"
+        elif risk_score >= 2.0:
+            return "СРЕДНИЙ"
+        elif risk_score >= 1.0:
+            return "НИЗКИЙ"
+        else:
+            return "МИНИМАЛЬНЫЙ"
+    
     def _create_batches(self, transactions: List[Dict]) -> List[List[Dict]]:
         """Создает батчи для мультипроцессинга"""
         batches = []
@@ -436,71 +452,99 @@ class UnifiedAMLPipeline:
         return results
     
     def _analyze_single_transaction(self, transaction: Dict) -> AnalysisResult:
-        """Выполняет полный анализ одной транзакции"""
+        """Выполняет полный анализ одной транзакции с использованием AFM Risk Engine"""
         start_time = time.time()
         client_id = transaction.get('debtor_account', 'UNKNOWN')
         
-        # Выполняем все виды анализа
-        risks = {}
+        # Инициализация результатов
+        afm_result = None
         explanations = []
         suspicious_flags = []
         
-        # 1. Транзакционный анализ
+        # 1. Выполняем ВСЕ анализы для полноты данных
+        risks = {}
+        
+        # 1.1 AFM Risk Engine анализ (приоритетный)
+        if self.afm_risk_engine:
+            try:
+                afm_result = self.afm_risk_engine.analyze_transaction(transaction)
+                explanations.extend([f"[АФМ {afm_result.category.value}] {reason}" for reason in afm_result.reasons])
+                
+                if afm_result.requires_simbase:
+                    suspicious_flags.append(f"Требует передачи в SimBASE (ранг {afm_result.rank})")
+                if afm_result.is_high_risk:
+                    suspicious_flags.append(f"Высокий риск по категории {afm_result.category.value}")
+                
+                logger.debug(f"AFM анализ: ранг {afm_result.rank}, категория {afm_result.category.value}")
+            except Exception as e:
+                logger.warning(f"Ошибка AFM анализа: {e}")
+                suspicious_flags.append(f"ОШИБКА AFM: {str(e)}")
+        
+        # 1.2 Транзакционный анализ
         try:
             tx_risk = self.analyzers['transaction'].analyze_transaction(transaction)
             risks['transaction'] = tx_risk.get('risk_score', 0.0)
             if tx_risk.get('suspicious_flags'):
-                suspicious_flags.extend(tx_risk['suspicious_flags'])
+                suspicious_flags.extend([f"[ТРАНЗАКЦИЯ] {flag}" for flag in tx_risk['suspicious_flags']])
         except Exception as e:
             logger.warning(f"Ошибка транзакционного анализа: {e}")
             risks['transaction'] = 0.0
         
-        # 2. Клиентский анализ  
+        # 1.3 Клиентский анализ  
         try:
             customer_risk = self.analyzers['customer'].analyze_customer(client_id)
             risks['customer'] = customer_risk.get('risk_score', 0.0)
-            if customer_risk.get('risk_factors'):
-                explanations.extend(customer_risk['risk_factors'])
+            if customer_risk.get('client_flags'):
+                suspicious_flags.extend([f"[КЛИЕНТ] {flag}" for flag in customer_risk['client_flags']])
         except Exception as e:
             logger.warning(f"Ошибка клиентского анализа: {e}")
             risks['customer'] = 0.0
         
-        # 3. Сетевой анализ
+        # 1.4 Сетевой анализ
         try:
             network_risk = self.analyzers['network'].analyze_network_patterns(transaction)
             risks['network'] = network_risk.get('risk_score', 0.0)
             if network_risk.get('network_flags'):
-                suspicious_flags.extend(network_risk['network_flags'])
+                suspicious_flags.extend([f"[СЕТЬ] {flag}" for flag in network_risk['network_flags']])
         except Exception as e:
             logger.warning(f"Ошибка сетевого анализа: {e}")
             risks['network'] = 0.0
         
-        # 4. Поведенческий анализ
+        # 1.5 Поведенческий анализ
         try:
-            # Создаем BehavioralProfile для конкретного клиента
             behavioral_analyzer = BehavioralProfile(client_id)
             behavioral_risk = behavioral_analyzer.analyze_behavior(client_id, transaction)
             risks['behavioral'] = behavioral_risk.get('risk_score', 0.0)
             if behavioral_risk.get('anomalies'):
-                explanations.extend(behavioral_risk['anomalies'])
+                explanations.extend([f"[ПОВЕДЕНИЕ] {anomaly}" for anomaly in behavioral_risk['anomalies']])
         except Exception as e:
             logger.warning(f"Ошибка поведенческого анализа: {e}")
             risks['behavioral'] = 0.0
         
-        # 5. Географический анализ
+        # 1.6 Географический анализ
         try:
             geo_risk = self.analyzers['geographic'].analyze_geography(transaction)
             risks['geographic'] = geo_risk.get('risk_score', 0.0)
             if geo_risk.get('geo_flags'):
-                suspicious_flags.extend(geo_risk['geo_flags'])
+                explanations.extend([f"[ГЕОГРАФИЯ] {flag}" for flag in geo_risk['geo_flags']])
         except Exception as e:
             logger.warning(f"Ошибка географического анализа: {e}")
             risks['geographic'] = 0.0
         
-        # 6. Расчет общего риска
-        overall_risk, risk_category = self.risk_calculator.calculate_overall_risk(risks)
+        # 2. Комбинируем AFM результат с другими анализами
+        if afm_result:
+            # AFM ранк как основа, но учитываем другие анализы
+            afm_risk = float(afm_result.rank)
+            combined_risk = self.risk_calculator.calculate_overall_risk(risks)[0]
+            
+            # Берем максимум между AFM и комбинированным риском
+            overall_risk = max(afm_risk, combined_risk)
+            risk_category = self._determine_category(overall_risk)
+        else:
+            # Если AFM не сработал, используем стандартную логику
+            overall_risk, risk_category = self.risk_calculator.calculate_overall_risk(risks)
         
-        # 7. Создание результата
+        # 4. Создание результата
         result = AnalysisResult(
             client_id=client_id,
             transaction_risk=risks.get('transaction', 0.0),

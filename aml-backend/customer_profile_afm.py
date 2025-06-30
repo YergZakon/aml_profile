@@ -226,6 +226,43 @@ class CustomerProfile:
             'reasons': reasons
         }
 
+    def analyze_customer(self, customer_id: str) -> Dict:
+        """Метод для интеграции с Unified Pipeline"""
+        # Симуляция анализа клиента (в реальной системе загружались бы данные из БД)
+        self.customer_id = customer_id
+        
+        # Базовые риск-факторы для клиента
+        self.risk_factors['country_risk'] = 2  # Низкий риск для резидента КЗ
+        self.risk_factors['product_risk'] = 3  # Средний риск продукта
+        self.risk_factors['behavior_risk'] = 2  # Низкий поведенческий риск
+        
+        # Проверяем, является ли клиент ПДЛ (простая эвристика)
+        if 'pep' in customer_id.lower() or 'pdl' in customer_id.lower():
+            self.customer_type['is_pep'] = True
+            self.risk_factors['base_risk_level'] = 'HIGH'
+            self.risk_factors['overall_risk_score'] = 8.0
+        
+        # Рассчитываем итоговый риск-скор
+        final_score = self.calculate_risk_score()
+        
+        # Формируем риск-факторы для объяснения
+        risk_factors = []
+        if self.customer_type['is_pep']:
+            risk_factors.append("Клиент является Публично-должностным лицом (ПДЛ)")
+        if self.risk_factors['country_risk'] > 5:
+            risk_factors.append("Высокий риск юрисдикции")
+        if self.risk_factors['behavior_risk'] > 5:
+            risk_factors.append("Подозрительные поведенческие паттерны")
+        
+        return {
+            'risk_score': final_score,
+            'risk_level': self.risk_factors['base_risk_level'],
+            'risk_factors': risk_factors,
+            'is_suspicious': final_score > 6.0,
+            'is_pep': self.customer_type['is_pep'],
+            'customer_id': customer_id
+        }
+
 
 # Пример использования
 if __name__ == "__main__":

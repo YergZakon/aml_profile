@@ -411,6 +411,21 @@ class GeographicProfile:
         
         return summary
 
+    def analyze_geography(self, transaction: Dict) -> Dict:
+        """Метод для интеграции с Unified Pipeline"""
+        # Вызываем основной метод анализа
+        result = self.analyze_transaction_geography(transaction)
+        
+        # Форматируем результат для unified pipeline
+        return {
+            'risk_score': result['total_risk_score'],
+            'geo_flags': result['red_flags'],  # Unified pipeline ожидает 'geo_flags'
+            'sender_risk': result['sender_risk'],
+            'beneficiary_risk': result['beneficiary_risk'],
+            'transit_risks': result['transit_risks'],
+            'route_pattern': result['route_pattern']
+        }
+
 
 # Пример использования
 if __name__ == "__main__":
